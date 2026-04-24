@@ -1,0 +1,19 @@
+{
+  "name": "同人誌管理ツール",
+  "short_name": "同人誌管理",
+  "description": "個人用の同人誌管理とイベント購入リスト",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#EFECE7",
+  "theme_color": "#6BA8A8",
+  "icons": [
+    {
+      "src": "icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
