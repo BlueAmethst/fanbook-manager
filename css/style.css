@@ -435,6 +435,24 @@ a { color: var(--primary); text-decoration: none; }
   font-weight: 600;
 }
 
+/* ========== Characters 1枠/2枠 ========== */
+.coupling-chars-row {
+  display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 6px;
+}
+.coupling-chars-box {
+  flex: 1; min-width: 130px;
+}
+.coupling-chars-label {
+  font-size: 12px; font-weight: 700; color: var(--accent);
+  margin-bottom: 6px; letter-spacing: 0.04em;
+}
+
+/* ========== Version info ========== */
+.version-info {
+  text-align: center; font-size: 12px; color: var(--text-dim);
+  padding: 10px 0 4px;
+}
+
 /* ========== Filter row ========== */
 .filter-row {
   display: flex; gap: 8px; flex-wrap: wrap;
