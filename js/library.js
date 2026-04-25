@@ -139,20 +139,48 @@ const Library = (() => {
 
     const body = el('div');
 
-    // ── カメラ：画像＋OCR結果（案B：コピペ補助） ──
-    const cameraInput = el('input', { type: 'file', accept: 'image/*', capture: 'environment', style: 'display:none' });
-    const scanBtn = el('button', { type: 'button', class: 'btn btn-scan btn-block', style: 'margin-bottom:12px' },
-      '📷 奥付を撮影（コピペ補助）');
-    const ocrPanel = el('div', { class: 'ocr-panel', style: 'display:none' });
-    body.appendChild(cameraInput);
-    body.appendChild(scanBtn);
+    // ── 奥付テキスト貼り付け（iOS Live Text対応） ──
+    const ocrPanel = el('details', { class: 'ocr-paste-panel' });
+    ocrPanel.innerHTML = `
+      <summary>📋 奥付テキストから自動入力（タップで開く）</summary>
+    `;
+    const inner = el('div', { class: 'ocr-paste-inner' });
+    inner.appendChild(el('div', { class: 'ocr-help' },
+      '【使い方】下の入力欄をタップ → キーボード右下の📷ボタン（iOS 16以降）で奥付を直接スキャンできます。または iPhoneの写真アプリでLive Textを使ってコピーし、ここに貼り付けてください。'));
+    const ocrTextarea = el('textarea', {
+      class: 'ocr-paste-textarea',
+      placeholder: '奥付の文字をここに貼り付け、または📷ボタンでスキャン\n例：\nタイトル：〇〇〇\nサークル：△△△\n作家：××',
+      rows: '5'
+    });
+    inner.appendChild(ocrTextarea);
+    const parseBtn = el('button', { type: 'button', class: 'btn btn-primary btn-block', style: 'margin-top:6px' },
+      '解析して各欄に自動入力');
+    inner.appendChild(parseBtn);
+    const parseStatus = el('div', { class: 'muted', style: 'font-size:12px;margin-top:6px' });
+    inner.appendChild(parseStatus);
+    ocrPanel.appendChild(inner);
     body.appendChild(ocrPanel);
 
-    scanBtn.addEventListener('click', () => cameraInput.click());
-    cameraInput.addEventListener('change', async (e) => {
-      const file = e.target.files[0];
-      if (!file) return;
-      await showOcrPanel(ocrPanel, file);
+    parseBtn.addEventListener('click', () => {
+      const text = ocrTextarea.value || '';
+      if (!text.trim()) { UI.toast('テキストを入力してください'); return; }
+      const parsed = OCR.parseColophon(text);
+      const fields = ['title', 'circleName', 'authorName', 'twitter'];
+      const filled = [];
+      for (const k of fields) {
+        const inp = body.querySelector(`[name=${k}]`);
+        if (inp && parsed[k] && !inp.value) { inp.value = parsed[k]; filled.push(k); }
+      }
+      if (parsed.price && !body.querySelector('[name=price]').value) {
+        body.querySelector('[name=price]').value = parsed.price;
+        filled.push('price');
+      }
+      if (filled.length) {
+        parseStatus.textContent = `✅ ${filled.length}項目を自動入力しました`;
+        UI.toast(`${filled.length}項目を自動入力`);
+      } else {
+        parseStatus.textContent = '⚠️ 「タイトル：」「サークル：」「作家：」のような形式が見つかりませんでした。手入力してください。';
+      }
     });
 
     // ── 基本フィールド ──
@@ -234,96 +262,6 @@ const Library = (() => {
     wrap.appendChild(el('div', { class: 'muted', style: 'font-size:11px;margin-top:4px' },
       '1枠（左）・2枠（右）の人名は「設定」→「人名リスト」で登録できます'));
     return wrap;
-  }
-
-  // ── OCRパネル：画像＋認識結果からのコピペ ──
-  async function showOcrPanel(panel, file) {
-    panel.innerHTML = '';
-    panel.style.display = '';
-
-    // 画像プレビュー
-    const imgUrl = URL.createObjectURL(file);
-    const img = el('img', { src: imgUrl, class: 'ocr-image', alt: '撮影した画像' });
-    panel.appendChild(img);
-
-    // OCR実行中表示
-    const status = el('div', { class: 'ocr-loading' }, [
-      el('div', { class: 'ocr-spinner' }), '文字認識中… 初回は少し時間がかかります'
-    ]);
-    panel.appendChild(status);
-
-    let text = '';
-    try {
-      text = await OCR.recognize(file);
-    } catch (err) {
-      status.replaceWith(el('div', { class: 'muted', style: 'padding:10px' }, '読み取り失敗：' + (err.message || '不明')));
-      return;
-    }
-    status.remove();
-
-    panel.appendChild(el('div', { class: 'ocr-help' },
-      '↓ 認識結果。各行の📋をタップでコピーできます。下の入力欄に貼り付けてください。'));
-
-    // 行ごとに表示・コピー可能
-    const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
-    if (!lines.length) {
-      panel.appendChild(el('div', { class: 'muted', style: 'padding:8px' }, '文字を認識できませんでした'));
-    } else {
-      const linesBox = el('div', { class: 'ocr-lines' });
-      for (const line of lines) {
-        const row = el('div', { class: 'ocr-line' });
-        const txt = el('span', { class: 'ocr-line-text' }, line);
-        const btn = el('button', { type: 'button', class: 'ocr-copy-btn', title: 'コピー' }, '📋');
-        btn.addEventListener('click', async (e) => {
-          e.stopPropagation();
-          await copyToClipboard(line);
-          btn.textContent = '✓';
-          setTimeout(() => { btn.textContent = '📋'; }, 1200);
-        });
-        row.appendChild(txt);
-        row.appendChild(btn);
-        // 行全体タップでもコピー
-        row.addEventListener('click', async () => {
-          await copyToClipboard(line);
-          btn.textContent = '✓';
-          setTimeout(() => { btn.textContent = '📋'; }, 1200);
-        });
-        linesBox.appendChild(row);
-      }
-      panel.appendChild(linesBox);
-    }
-
-    // 編集可能な全文textarea
-    panel.appendChild(el('div', { class: 'muted', style: 'font-size:11px;margin-top:8px' }, '全文（編集可・選択コピー可）'));
-    panel.appendChild(el('textarea', { class: 'ocr-fulltext', rows: '4' }, text));
-
-    // 閉じるボタン
-    const closeBtn = el('button', { type: 'button', class: 'btn btn-sm btn-ghost', style: 'margin-top:6px' }, '撮影パネルを閉じる');
-    closeBtn.addEventListener('click', () => {
-      panel.style.display = 'none';
-      panel.innerHTML = '';
-      URL.revokeObjectURL(imgUrl);
-    });
-    panel.appendChild(closeBtn);
-  }
-
-  async function copyToClipboard(s) {
-    try {
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        await navigator.clipboard.writeText(s);
-      } else {
-        const ta = document.createElement('textarea');
-        ta.value = s;
-        ta.style.position = 'fixed'; ta.style.left = '-9999px';
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand('copy');
-        ta.remove();
-      }
-      UI.toast('コピーしました');
-    } catch (_) {
-      UI.toast('コピーに失敗しました（手動で選択してください）');
-    }
   }
 
   // ── ヘルパー ──

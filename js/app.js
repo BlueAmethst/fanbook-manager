@@ -1,5 +1,5 @@
 // ====== アプリバージョン ======
-const APP_VERSION = '2026-04-25 rev.3';
+const APP_VERSION = '2026-04-25 rev.4';
 
 // ====== Router + App bootstrap ======
 const App = (() => {
@@ -7,6 +7,7 @@ const App = (() => {
     'library': { title: '同人誌管理', render: () => Library.render() },
     'events':  { title: 'イベント管理', render: () => Events.renderList() },
     'event':   { title: 'イベント詳細', render: (p) => Events.renderDetail(p) },
+    'stats':   { title: '統計（金額）', render: () => Stats.render() },
     'settings':{ title: '設定', render: () => Settings.render() }
   };
 

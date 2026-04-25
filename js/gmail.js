@@ -130,21 +130,21 @@ const Gmail = (() => {
   const SHOP_RULES = [
     {
       key: 'BOOTH',
-      senderQuery: 'from:(booth.pm OR noreply@booth.pm)',
+      senderQuery: 'from:(@booth.pm)',
       displayName: 'BOOTH',
       parse: parseBooth
     },
     {
       key: 'とらのあな',
-      senderQuery: 'from:(toranoana.jp OR ec.toranoana.jp)',
+      senderQuery: 'from:(@toranoana.shop OR @toranoana.jp OR @ec.toranoana.jp)',
       displayName: 'とらのあな',
-      parse: parseGeneric
+      parse: parseToranoana
     },
     {
       key: 'メロンブックス',
-      senderQuery: 'from:(melonbooks.co.jp)',
+      senderQuery: 'from:(@melonbooks.co.jp)',
       displayName: 'メロンブックス',
-      parse: parseGeneric
+      parse: parseMelonbooks
     }
   ];
 
@@ -320,29 +320,112 @@ const Gmail = (() => {
     return `${y}-${mo}-${da}`;
   }
 
+  // 件名にこれらが含まれるメールは除外（仕入・発注メール等）
+  const EXCLUDE_SUBJECT = /発注|入荷|仕入|請求書|キャンセル|返品|中止|変更|問い合わせ|お問合せ/;
+
+  // ── BOOTH パーサー ──
+  // 件名：「ご注文の確認 [BOOTH]」
+  // 商品行：「<タイトル>: \ <単価> x <数量>点 = \ <小計>」
+  // 合計：「合計：\ <総額>」← これを price に使う（送料込み）
   function parseBooth(msg) {
     const h = getHeaders(msg);
     const subject = h.subject || '';
-    if (!/注文|購入|BOOTH|ご注文|発送/i.test(subject)) return null;
+    if (!/ご注文の確認|ご注文ありがとう/i.test(subject)) return null;
+    if (EXCLUDE_SUBJECT.test(subject)) return null;
     const body = extractBody(msg.payload).replace(/\r/g, '');
-    const items = [];
-    const lineRegex = /^(.{2,100}?)\s*(?:[x×]\s*\d+)?\s*[¥￥]\s*([0-9,]+)/gm;
-    let m;
-    while ((m = lineRegex.exec(body)) !== null) {
-      const title = m[1].replace(/[|・:]/g, '').trim();
-      if (!title || /送料|合計|小計|税|ポイント|支払|配送|割引/.test(title)) continue;
-      items.push({ title, price: Number(m[2].replace(/,/g, '')) });
-      if (items.length > 30) break;
+
+    // 合計（送料込み）を抽出
+    let total = null;
+    const totalMatch = body.match(/合計[：:]\s*[\\￥¥]?\s*([0-9,]+)/);
+    if (totalMatch) total = Number(totalMatch[1].replace(/,/g, ''));
+
+    // 商品タイトルを抽出（[注文内容] セクション以降）
+    const titles = [];
+    const itemSection = body.split(/\[注文内容\]/)[1] || body;
+    const cutEnd = itemSection.split(/\[(?:お支払金額|配送先|お届け先)\]/)[0] || itemSection;
+    const itemLines = cutEnd.split('\n').map((l) => l.trim()).filter(Boolean);
+    for (const line of itemLines) {
+      // 「<タイトル>: \ 700 x 1点 = \ 700」のパターン
+      const m = line.match(/^(.+?):\s*[\\￥¥]\s*[\d,]+\s*[x×]\s*\d+/);
+      if (m) titles.push(m[1].trim());
+      if (titles.length >= 10) break;
     }
-    if (!items.length) items.push({ title: subject.replace(/^.*?[:：】]\s*/, ''), price: null });
+
+    const title = titles.length
+      ? (titles.length === 1 ? titles[0] : `${titles[0]} 他${titles.length - 1}点`)
+      : subject.replace(/^.*?[:：】]\s*/, '');
+
+    return {
+      subject, date: headerDate(h),
+      items: [{ title, price: total }]
+    };
+  }
+
+  // ── とらのあな パーサー ──
+  // 件名：「【株式会社　虎の穴】ご注文受付完了のお知らせ」
+  // 商品名：「商品名　　　　：<タイトル>」
+  // 商品金額：「商品金額　　　：<金額>円」
+  function parseToranoana(msg) {
+    const h = getHeaders(msg);
+    const subject = h.subject || '';
+    if (!/ご注文受付|ご注文完了|発送|お届け|出荷/i.test(subject)) return null;
+    if (EXCLUDE_SUBJECT.test(subject)) return null;
+    const body = extractBody(msg.payload).replace(/\r/g, '');
+
+    // 「商品名」と「商品金額」のペアを順に拾う（複数商品対応）
+    const items = [];
+    // 全角スペース・半角スペース両対応
+    const titleRegex = /商品名[\s　]*[：:]\s*(.+)/g;
+    const priceRegex = /商品金額[\s　]*[：:]\s*([0-9,]+)\s*円/g;
+    const titles = [];
+    const prices = [];
+    let m;
+    while ((m = titleRegex.exec(body)) !== null) titles.push(m[1].trim());
+    while ((m = priceRegex.exec(body)) !== null) prices.push(Number(m[1].replace(/,/g, '')));
+
+    const len = Math.max(titles.length, prices.length);
+    for (let i = 0; i < len; i++) {
+      items.push({ title: titles[i] || subject, price: prices[i] != null ? prices[i] : null });
+    }
+    if (!items.length) items.push({ title: subject.replace(/^.*?】\s*/, ''), price: null });
+
     return { subject, date: headerDate(h), items };
   }
 
-  function parseGeneric(msg) {
+  // ── メロンブックス パーサー ──
+  // 件名：「ご注文の確認(メロンブックス/フロマージュブックス)」
+  // 商品名：「商品名: <タイトル>」
+  // 合計額（送料込み）：「合計額:1,100円(税込)」← これを price に使う
+  function parseMelonbooks(msg) {
     const h = getHeaders(msg);
     const subject = h.subject || '';
-    if (!/注文|購入|発送|お買い上げ|ご購入/i.test(subject)) return null;
-    return { subject, date: headerDate(h), items: [{ title: subject, price: null }] };
+    if (!/ご注文の確認|ご注文ありがとう|発送|出荷/i.test(subject)) return null;
+    if (EXCLUDE_SUBJECT.test(subject)) return null;
+    const body = extractBody(msg.payload).replace(/\r/g, '');
+
+    // 合計額（送料込み）
+    let total = null;
+    const totalMatch = body.match(/合計額\s*[：:]\s*([0-9,]+)\s*円/);
+    if (totalMatch) total = Number(totalMatch[1].replace(/,/g, ''));
+
+    // 商品名を抽出
+    const titles = [];
+    const titleRegex = /商品名\s*[：:]\s*(.+)/g;
+    let m;
+    while ((m = titleRegex.exec(body)) !== null) {
+      const t = m[1].trim();
+      if (t) titles.push(t);
+      if (titles.length >= 10) break;
+    }
+
+    const title = titles.length
+      ? (titles.length === 1 ? titles[0] : `${titles[0]} 他${titles.length - 1}点`)
+      : subject.replace(/^.*?[:：】]\s*/, '');
+
+    return {
+      subject, date: headerDate(h),
+      items: [{ title, price: total }]
+    };
   }
 
   return { openImport, signIn, signInDirect, prepareClient };
