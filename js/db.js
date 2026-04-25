@@ -115,6 +115,10 @@ const DB = (() => {
     settings: {
       get: (k) => get(STORES.settings, k).then((v) => v ? v.value : undefined),
       set: (k, v) => put(STORES.settings, { key: k, value: v })
+    },
+    characters: {
+      all: async () => (await get(STORES.settings, 'characters'))?.value || [],
+      save: async (list) => put(STORES.settings, { key: 'characters', value: list })
     }
   };
 })();

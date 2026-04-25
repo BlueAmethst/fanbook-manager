@@ -1,62 +1,96 @@
 // ====== Gmail API integration ======
-// Uses Google Identity Services token flow (browser, no client secret).
-// Scope: gmail.readonly — read only.
+// Google Identity Services トークンフロー（ブラウザ、シークレット不要）
+// Scope: gmail.readonly のみ（読み取り専用）
 const Gmail = (() => {
   const { el, esc } = UI;
   const SCOPE = 'https://www.googleapis.com/auth/gmail.readonly';
-  let gisLoaded = false;
+  let gisLoading = null;
   let tokenClient = null;
+  let tokenClientId = null;
 
+  // ── GIS スクリプトを事前ロード（アプリ起動直後に呼ばれる） ──
   function loadGIS() {
-    if (gisLoaded) return Promise.resolve();
-    return new Promise((resolve, reject) => {
-      if (window.google && window.google.accounts) { gisLoaded = true; return resolve(); }
+    if (window.google && window.google.accounts && window.google.accounts.oauth2) {
+      return Promise.resolve();
+    }
+    if (gisLoading) return gisLoading;
+    gisLoading = new Promise((resolve, reject) => {
       const s = document.createElement('script');
       s.src = 'https://accounts.google.com/gsi/client';
       s.async = true; s.defer = true;
-      s.onload = () => { gisLoaded = true; resolve(); };
-      s.onerror = () => reject(new Error('Google Identity Services読み込み失敗'));
+      s.onload = () => resolve();
+      s.onerror = () => { gisLoading = null; reject(new Error('Google Identity Services 読み込み失敗（ネット接続を確認）')); };
       document.head.appendChild(s);
+    });
+    return gisLoading;
+  }
+
+  // ── tokenClient を事前作成 ──
+  function prepareClient(clientId) {
+    if (!clientId) return;
+    return loadGIS().then(() => {
+      if (tokenClient && tokenClientId === clientId) return tokenClient;
+      tokenClient = google.accounts.oauth2.initTokenClient({
+        client_id: clientId,
+        scope: SCOPE,
+        callback: () => {} // 後で上書き
+      });
+      tokenClientId = clientId;
+      return tokenClient;
     });
   }
 
+  // 起動時にClient IDが既に登録されていれば事前準備
+  async function autoInit() {
+    try {
+      const cid = await DB.settings.get('gmailClientId');
+      if (cid) await prepareClient(cid);
+    } catch (_) {}
+  }
+  // DOMロード後に自動準備
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', autoInit);
+  } else {
+    autoInit();
+  }
+
+  // ── サインイン（クリック直後に呼ばれる前提） ──
+  async function signIn() {
+    const cid = await DB.settings.get('gmailClientId');
+    if (!cid) {
+      UI.toast('先にClient IDを登録してください');
+      App.go('settings');
+      return;
+    }
+    // 事前準備済みでない場合、ここでロード（ポップアップブロックされる可能性あり）
+    if (!tokenClient || tokenClientId !== cid) {
+      await prepareClient(cid);
+    }
+    return new Promise((resolve, reject) => {
+      tokenClient.callback = async (resp) => {
+        if (resp.error) { reject(new Error(resp.error)); return; }
+        const token = resp.access_token;
+        const expiresAt = Date.now() + (Number(resp.expires_in) || 3600) * 1000;
+        await DB.settings.set('gmailToken', { token, expiresAt });
+        UI.toast('ログインしました');
+        App.route();
+        resolve(token);
+      };
+      try {
+        tokenClient.requestAccessToken({ prompt: '' });
+      } catch (e) { reject(e); }
+    });
+  }
+
+  // ── 既存トークンを使うか、対話なしで再取得（バックグラウンド更新は不可な場合あり） ──
   async function ensureToken() {
     const cid = await DB.settings.get('gmailClientId');
     if (!cid) throw new Error('Gmail Client IDが未設定です（設定画面で登録してください）');
     const saved = await DB.settings.get('gmailToken');
-    if (saved && saved.expiresAt && saved.expiresAt > Date.now() + 60000) return saved.token;
-    return await signInInternal(cid);
-  }
-
-  async function signIn() {
-    try {
-      const cid = await DB.settings.get('gmailClientId');
-      if (!cid) { UI.toast('先にClient IDを登録してください'); return; }
-      await signInInternal(cid);
-      UI.toast('ログインしました');
-      App.route();
-    } catch (err) {
-      UI.toast('ログイン失敗：' + err.message);
+    if (saved && saved.token && saved.expiresAt && saved.expiresAt > Date.now() + 60000) {
+      return saved.token;
     }
-  }
-
-  function signInInternal(clientId) {
-    return loadGIS().then(() => new Promise((resolve, reject) => {
-      try {
-        tokenClient = google.accounts.oauth2.initTokenClient({
-          client_id: clientId,
-          scope: SCOPE,
-          callback: async (resp) => {
-            if (resp.error) return reject(new Error(resp.error));
-            const token = resp.access_token;
-            const expiresAt = Date.now() + (Number(resp.expires_in) || 3600) * 1000;
-            await DB.settings.set('gmailToken', { token, expiresAt });
-            resolve(token);
-          }
-        });
-        tokenClient.requestAccessToken({ prompt: '' });
-      } catch (e) { reject(e); }
-    }));
+    throw new Error('再ログインが必要です（設定画面の「Googleでログイン」を押してください）');
   }
 
   async function apiGet(path, token) {
@@ -70,7 +104,6 @@ const Gmail = (() => {
     return r.json();
   }
 
-  // Known shop email senders & patterns
   const SHOP_RULES = [
     {
       key: 'BOOTH',
@@ -93,8 +126,9 @@ const Gmail = (() => {
   ];
 
   async function openImport() {
+    let token;
     try {
-      await ensureToken();
+      token = await ensureToken();
     } catch (e) {
       UI.toast(e.message);
       App.go('settings');
@@ -110,14 +144,14 @@ const Gmail = (() => {
       el('input', { type: 'number', name: 'days', value: '180', min: '1' })
     ]));
     body.appendChild(rangeField);
-    const runBtn = el('button', { class: 'btn btn-primary btn-block' }, '検索');
+    const runBtn = el('button', { type: 'button', class: 'btn btn-primary btn-block' }, '検索');
     body.appendChild(runBtn);
     const resultBox = el('div', { style: 'margin-top:12px;max-height:50vh;overflow:auto' });
     body.appendChild(resultBox);
 
     const foot = el('div', { style: 'display:flex;gap:10px;flex:1;justify-content:flex-end' });
-    foot.appendChild(el('button', { class: 'btn btn-ghost', onclick: UI.closeModal }, '閉じる'));
-    const saveBtn = el('button', { class: 'btn btn-primary', onclick: () => saveChecked(resultBox) }, '選択したものを登録');
+    foot.appendChild(el('button', { type: 'button', class: 'btn btn-ghost', onclick: UI.closeModal }, '閉じる'));
+    const saveBtn = el('button', { type: 'button', class: 'btn btn-primary', onclick: () => saveChecked(resultBox) }, '選択したものを登録');
     saveBtn.style.display = 'none';
     foot.appendChild(saveBtn);
 
@@ -174,7 +208,6 @@ const Gmail = (() => {
       box.appendChild(el('div', { class: 'empty' }, '購入確認メールが見つかりませんでした'));
       return;
     }
-    const existingBooks = []; // TODO: dedupe by title+date
     items.forEach((it, idx) => {
       const row = el('div', { class: 'card', style: 'padding:10px' });
       const cb = el('input', { type: 'checkbox', 'data-idx': idx, checked: 'checked' });
@@ -203,6 +236,8 @@ const Gmail = (() => {
         title: it.title || '',
         circleName: it.circleName || '',
         authorName: it.authorName || '',
+        twitter: '',
+        couplingLeft: '', couplingRight: '',
         price: it.price != null ? Number(it.price) : null,
         purchaseDate: it.date || new Date().toISOString().slice(0, 10),
         purchaseLocation: it.shop || '',
@@ -240,7 +275,6 @@ const Gmail = (() => {
     if (!payload) return '';
     if (payload.body && payload.body.data) return decodeBase64Url(payload.body.data);
     if (payload.parts) {
-      // prefer text/plain
       for (const p of payload.parts) if (p.mimeType === 'text/plain') {
         const b = extractBody(p);
         if (b) return b;
@@ -263,14 +297,12 @@ const Gmail = (() => {
     return `${y}-${mo}-${da}`;
   }
 
-  // BOOTH: 商品名と価格を抽出
   function parseBooth(msg) {
     const h = getHeaders(msg);
     const subject = h.subject || '';
     if (!/注文|購入|BOOTH|ご注文|発送/i.test(subject)) return null;
     const body = extractBody(msg.payload).replace(/\r/g, '');
     const items = [];
-    // Try to match lines like "商品名 x1 ¥1,000" or similar
     const lineRegex = /^(.{2,100}?)\s*(?:[x×]\s*\d+)?\s*[¥￥]\s*([0-9,]+)/gm;
     let m;
     while ((m = lineRegex.exec(body)) !== null) {
@@ -283,7 +315,6 @@ const Gmail = (() => {
     return { subject, date: headerDate(h), items };
   }
 
-  // Generic shop parser — just use subject as title, no price
   function parseGeneric(msg) {
     const h = getHeaders(msg);
     const subject = h.subject || '';
@@ -291,5 +322,5 @@ const Gmail = (() => {
     return { subject, date: headerDate(h), items: [{ title: subject, price: null }] };
   }
 
-  return { openImport, signIn };
+  return { openImport, signIn, prepareClient };
 })();

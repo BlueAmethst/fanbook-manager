@@ -12,9 +12,40 @@ const Settings = (() => {
   async function render() {
     const container = el('div');
 
+    // ──── 人名（キャラ）リスト ────
+    container.appendChild(el('h2', {}, '人名（キャラ）リスト'));
+    container.appendChild(el('p', { class: 'muted' },
+      'カップリング欄で選べる人名を登録します。1行に1人ずつ書いてください。'));
+
+    const characters = await DB.characters.all();
+    const charsTextarea = el('textarea', {
+      id: 'characters-text',
+      style: 'min-height:120px'
+    }, characters.map((c) => c.name).join('\n'));
+    container.appendChild(el('div', { class: 'field' }, [charsTextarea]));
+    container.appendChild(el('button', {
+      type: 'button',
+      class: 'btn btn-primary btn-block',
+      onclick: async () => {
+        const lines = charsTextarea.value.split('\n').map((s) => s.trim()).filter(Boolean);
+        const seen = new Set();
+        const list = [];
+        for (const name of lines) {
+          if (seen.has(name)) continue;
+          seen.add(name);
+          list.push({ id: uid('char_'), name });
+        }
+        await DB.characters.save(list);
+        UI.toast(`人名 ${list.length}件を保存しました`);
+      }
+    }, '人名リストを保存'));
+
+    container.appendChild(el('div', { class: 'hr' }));
+
     // ──── カスタムフィールド ────
     container.appendChild(el('h2', {}, 'カスタムフィールド'));
-    container.appendChild(el('p', { class: 'muted' }, '同人誌管理・スペースで使える共通フィールドです。形式を選んで自由に追加できます。'));
+    container.appendChild(el('p', { class: 'muted' },
+      '同人誌管理・スペースで使える共通フィールドです。形式を選んで自由に追加できます。'));
 
     const fields = await DB.customFields.all();
     const fieldList = el('div');
@@ -40,8 +71,8 @@ const Settings = (() => {
           c.appendChild(opts);
         }
         const row = el('div', { style: 'display:flex;gap:8px;margin-top:10px' }, [
-          el('button', { class: 'btn btn-sm', onclick: () => editField(f, refresh) }, '編集'),
-          el('button', { class: 'btn btn-sm btn-danger', onclick: async () => {
+          el('button', { type: 'button', class: 'btn btn-sm', onclick: () => editField(f, refresh) }, '編集'),
+          el('button', { type: 'button', class: 'btn btn-sm btn-danger', onclick: async () => {
             if (await UI.confirm(`「${f.name}」を削除しますか？`)) {
               await DB.customFields.remove(f.id);
               fields.splice(fields.findIndex((x) => x.id === f.id), 1);
@@ -62,6 +93,7 @@ const Settings = (() => {
     renderFields();
 
     container.appendChild(el('button', {
+      type: 'button',
       class: 'btn btn-primary btn-block',
       style: 'margin-top:10px',
       onclick: () => editField(null, refresh)
@@ -72,50 +104,89 @@ const Settings = (() => {
     // ──── Gmail連携 ────
     container.appendChild(el('h2', {}, 'Gmail連携'));
     const clientId = (await DB.settings.get('gmailClientId')) || '';
-    const connected = !!(await DB.settings.get('gmailToken'));
+    const tokenObj = await DB.settings.get('gmailToken');
+    const connected = !!(tokenObj && tokenObj.token);
 
     container.appendChild(el('div', { class: 'card' }, [
       el('div', { class: 'card-title' }, connected ? '✅ 連携済み' : '未連携'),
       el('div', { class: 'card-sub' }, clientId ? 'クライアントIDは登録済みです' : 'クライアントIDが未設定です')
     ]));
+
+    const cidInput = el('input', {
+      type: 'text', id: 'gmail-client-id', value: clientId,
+      placeholder: 'xxxxx.apps.googleusercontent.com',
+      autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false'
+    });
     container.appendChild(el('div', { class: 'field' }, [
       el('label', {}, 'Google OAuth Client ID'),
-      el('input', { type: 'text', id: 'gmail-client-id', value: clientId, placeholder: 'xxxxx.apps.googleusercontent.com' })
+      cidInput
     ]));
     container.appendChild(el('button', {
+      type: 'button',
       class: 'btn btn-block',
       onclick: async () => {
-        const v = document.getElementById('gmail-client-id').value.trim();
-        await DB.settings.set('gmailClientId', v);
-        UI.toast('保存しました');
+        const v = cidInput.value.trim();
+        if (!v) { UI.toast('Client IDを入力してください'); return; }
+        try {
+          await DB.settings.set('gmailClientId', v);
+          UI.toast('Client IDを保存しました');
+          // GISがあれば事前にtokenClientを準備
+          if (window.Gmail && Gmail.prepareClient) Gmail.prepareClient(v);
+        } catch (err) {
+          UI.toast('保存エラー：' + err.message);
+        }
       }
     }, 'Client IDを保存'));
 
     const btnRow = el('div', { class: 'row', style: 'margin-top:10px' });
-    btnRow.appendChild(el('button', { class: 'btn btn-primary btn-block', onclick: () => Gmail.signIn() },
-      connected ? '再ログイン' : 'Googleでログイン'));
+    btnRow.appendChild(el('button', {
+      type: 'button',
+      class: 'btn btn-primary btn-block',
+      onclick: async (e) => {
+        // クリック直後にrequestAccessTokenを呼ぶ必要がある（ポップアップブロック対策）
+        e.preventDefault();
+        try {
+          await Gmail.signIn();
+        } catch (err) {
+          UI.toast('ログイン失敗：' + (err.message || '不明'));
+        }
+      }
+    }, connected ? '再ログイン' : 'Googleでログイン'));
     if (connected) {
-      btnRow.appendChild(el('button', { class: 'btn btn-danger btn-block', onclick: async () => {
+      btnRow.appendChild(el('button', { type: 'button', class: 'btn btn-danger btn-block', onclick: async () => {
         await DB.settings.set('gmailToken', null);
         UI.toast('ログアウトしました'); App.route();
       } }, 'ログアウト'));
     }
     container.appendChild(btnRow);
 
+    // ──── Gmail 初回設定の手順（最新化） ────
     const guide = el('details', { class: 'grid-config', style: 'margin-top:10px' });
+    const origin = location.origin;
     guide.innerHTML = `
-      <summary>🔐 Gmail API 設定の手順（初回のみ）</summary>
+      <summary>🔐 Gmail API 初回設定の手順</summary>
       <div style="margin-top:10px;font-size:14px;line-height:1.7">
-        <ol style="padding-left:20px">
-          <li><a href="https://console.cloud.google.com/" target="_blank">Google Cloud Console</a> にアクセス</li>
-          <li>プロジェクトを新規作成（例：「doujin-manager」）</li>
-          <li>「APIとサービス」→「ライブラリ」で「Gmail API」を有効化</li>
-          <li>「OAuth同意画面」で外部を選択し、テストユーザーに自分を追加</li>
-          <li>「認証情報」→「OAuthクライアントID」→「ウェブアプリケーション」</li>
-          <li><b>承認済みのJavaScript生成元</b>にアプリのURL（例：GitHub PagesのURL）を追加</li>
-          <li>クライアントIDを上のフォームに貼り付けて保存</li>
+        <p style="margin:0 0 10px"><b>このアプリのオリジン：</b><code style="background:var(--bg-elev2);padding:2px 6px;border-radius:4px">${esc(origin)}</code></p>
+        <ol style="padding-left:20px;margin:0">
+          <li><a href="https://console.cloud.google.com/" target="_blank" rel="noopener">Google Cloud Console</a> にアクセスしGoogleアカウントでログイン</li>
+          <li>上部の「プロジェクトの選択」→「新しいプロジェクト」（例：doujin-manager）</li>
+          <li>左メニュー「APIとサービス」→「ライブラリ」で「<b>Gmail API</b>」を検索→有効化</li>
+          <li>左メニュー「APIとサービス」→「<b>OAuth同意画面</b>」<br>
+            ・User Type：「外部」<br>
+            ・アプリ名・サポートメール（自分のGmail）・デベロッパー連絡先（自分のGmail）を入力<br>
+            ・「対象」タブで「テストユーザー」に自分のGmailアドレスを追加
+          </li>
+          <li>左メニュー「APIとサービス」→「<b>認証情報</b>」→「＋認証情報を作成」→「<b>OAuthクライアントID</b>」<br>
+            ・アプリケーションの種類：「<b>ウェブアプリケーション</b>」<br>
+            ・名前：任意<br>
+            ・<b>承認済みのJavaScript生成元</b>に上記オリジン <code>${esc(origin)}</code> を追加<br>
+            ・「リダイレクトURI」は不要（このアプリはトークンフロー）
+          </li>
+          <li>表示された<b>クライアントID</b>を上のフォームに貼り付け→「Client IDを保存」</li>
+          <li>「Googleでログイン」を押下</li>
         </ol>
-        <p class="muted">※クライアントシークレットはブラウザアプリでは不要です。データはこのデバイス内にのみ保存されます。</p>
+        <p class="muted" style="margin-top:10px">※ クライアントシークレットはブラウザアプリでは使いません。トークンはこの端末内（IndexedDB）にのみ保存されます。</p>
+        <p class="muted">※ ポップアップブロックされる場合、ブラウザの設定で <code>${esc(origin)}</code> のポップアップを許可してください。</p>
       </div>
     `;
     container.appendChild(guide);
@@ -127,10 +198,10 @@ const Settings = (() => {
     container.appendChild(el('p', { class: 'muted' }, 'JSONでバックアップ／インポートできます。CSVはExcelで開けます。'));
 
     const dataRow = el('div', { class: 'row' });
-    dataRow.appendChild(el('button', { class: 'btn', onclick: exportAll }, '📦 JSONエクスポート'));
-    dataRow.appendChild(el('button', { class: 'btn btn-accent', onclick: exportCSV }, '📊 CSVエクスポート（Excel用）'));
+    dataRow.appendChild(el('button', { type: 'button', class: 'btn', onclick: exportAll }, '📦 JSONエクスポート'));
+    dataRow.appendChild(el('button', { type: 'button', class: 'btn btn-accent', onclick: exportCSV }, '📊 CSVエクスポート（Excel用）'));
 
-    const importBtn = el('button', { class: 'btn' }, '📥 JSONインポート');
+    const importBtn = el('button', { type: 'button', class: 'btn' }, '📥 JSONインポート');
     const importInput = el('input', { type: 'file', accept: '.json', style: 'display:none' });
     importBtn.onclick = () => importInput.click();
     importInput.onchange = async (e) => {
@@ -162,7 +233,6 @@ const Settings = (() => {
       el('input', { type: 'text', name: 'name', value: f.name, placeholder: '例：お気に入り度' })
     ]));
 
-    // 形式選択
     const typeField = el('div', { class: 'field' }, [el('label', {}, '入力形式')]);
     const typeSel = el('select', { name: 'type' });
     for (const t of FIELD_TYPES) {
@@ -173,7 +243,6 @@ const Settings = (() => {
     typeField.appendChild(typeSel);
     body.appendChild(typeField);
 
-    // 選択肢エリア（選択肢タイプのみ表示）
     const optionsWrap = el('div', { id: 'options-wrap' });
     optionsWrap.appendChild(el('div', { class: 'field' }, [
       el('label', {}, '選択肢（1行につき1つ）'),
@@ -188,8 +257,8 @@ const Settings = (() => {
     toggleOptions();
 
     const foot = el('div', { style: 'display:flex;gap:10px;flex:1;justify-content:flex-end' });
-    foot.appendChild(el('button', { class: 'btn btn-ghost', onclick: UI.closeModal }, 'キャンセル'));
-    foot.appendChild(el('button', { class: 'btn btn-primary', onclick: async () => {
+    foot.appendChild(el('button', { type: 'button', class: 'btn btn-ghost', onclick: UI.closeModal }, 'キャンセル'));
+    foot.appendChild(el('button', { type: 'button', class: 'btn btn-primary', onclick: async () => {
       const name = body.querySelector('[name=name]').value.trim();
       if (!name) { UI.toast('フィールド名を入力してください'); return; }
       f.name = name;
@@ -211,12 +280,13 @@ const Settings = (() => {
   // ──── エクスポート ────
   async function exportAll() {
     const data = {
-      version: 1,
+      version: 2,
       exportedAt: new Date().toISOString(),
       books: await DB.books.all(),
       events: await DB.events.all(),
       spaces: await DB.getAll(DB.STORES.spaces),
-      customFields: await DB.customFields.all()
+      customFields: await DB.customFields.all(),
+      characters: await DB.characters.all()
     };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     downloadBlob(blob, `doujin-manager-${today()}.json`);
@@ -224,14 +294,17 @@ const Settings = (() => {
 
   async function exportCSV() {
     const [books, fields] = await Promise.all([DB.books.all(), DB.customFields.all()]);
-    const headers = ['書名', 'サークル名', '作家名', '金額', '数量', '購入日付', '購入場所', '備考'];
+    const headers = ['書名', 'サークル名', '作家名', 'Twitter', 'カップリング', '金額', '数量', '購入日付', '購入場所', '備考'];
     for (const f of fields) headers.push(f.name);
 
     const rows = books.map((b) => {
+      const cp = (b.couplingLeft && b.couplingRight) ? `${b.couplingLeft}×${b.couplingRight}` : (b.coupling || '');
       const row = [
         b.title || '',
         b.circleName || '',
         b.authorName || '',
+        b.twitter || '',
+        cp,
         b.price != null ? b.price : '',
         b.quantity || 1,
         b.purchaseDate || '',
@@ -242,7 +315,6 @@ const Settings = (() => {
       return row;
     });
 
-    // BOM付きUTF-8でExcelの文字化けを防ぐ (﻿ = BOM)
     const csvBody = [headers, ...rows].map((row) =>
       row.map((cell) => {
         const s = String(cell).replace(/"/g, '""');
@@ -269,6 +341,7 @@ const Settings = (() => {
     for (const e of data.events       || []) await DB.events.save(e);
     for (const s of data.spaces       || []) await DB.spaces.save(s);
     for (const c of data.customFields || []) await DB.customFields.save(c);
+    if (Array.isArray(data.characters)) await DB.characters.save(data.characters);
   }
 
   function downloadBlob(blob, filename) {
