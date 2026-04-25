@@ -119,6 +119,14 @@ const DB = (() => {
     characters: {
       all: async () => (await get(STORES.settings, 'characters'))?.value || [],
       save: async (list) => put(STORES.settings, { key: 'characters', value: list })
+    },
+    characters1: {
+      all: async () => (await get(STORES.settings, 'characters1'))?.value || [],
+      save: async (list) => put(STORES.settings, { key: 'characters1', value: list })
+    },
+    characters2: {
+      all: async () => (await get(STORES.settings, 'characters2'))?.value || [],
+      save: async (list) => put(STORES.settings, { key: 'characters2', value: list })
     }
   };
 })();

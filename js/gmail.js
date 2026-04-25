@@ -7,6 +7,7 @@ const Gmail = (() => {
   let gisLoading = null;
   let tokenClient = null;
   let tokenClientId = null;
+  let cachedClientId = null;  // メモリキャッシュ（クリック時にDBアクセス不要にする）
 
   // ── GIS スクリプトを事前ロード（アプリ起動直後に呼ばれる） ──
   function loadGIS() {
@@ -27,7 +28,8 @@ const Gmail = (() => {
 
   // ── tokenClient を事前作成 ──
   function prepareClient(clientId) {
-    if (!clientId) return;
+    if (!clientId) return Promise.resolve();
+    cachedClientId = clientId;
     return loadGIS().then(() => {
       if (tokenClient && tokenClientId === clientId) return tokenClient;
       tokenClient = google.accounts.oauth2.initTokenClient({
@@ -44,7 +46,10 @@ const Gmail = (() => {
   async function autoInit() {
     try {
       const cid = await DB.settings.get('gmailClientId');
-      if (cid) await prepareClient(cid);
+      if (cid) {
+        cachedClientId = cid;
+        await prepareClient(cid);
+      }
     } catch (_) {}
   }
   // DOMロード後に自動準備
@@ -54,33 +59,51 @@ const Gmail = (() => {
     autoInit();
   }
 
-  // ── サインイン（クリック直後に呼ばれる前提） ──
-  async function signIn() {
-    const cid = await DB.settings.get('gmailClientId');
-    if (!cid) {
+  // ── サインイン：クリックハンドラから「同期的に」呼ぶこと（async関数にしない） ──
+  // iOSのSafari/Chromeではawaitを挟むとポップアップがブロックされる
+  function signInDirect() {
+    if (!cachedClientId) {
+      // Client ID未登録 → 設定画面へ誘導（裏でDBから読み直しを試みる）
+      DB.settings.get('gmailClientId').then((cid) => {
+        if (cid) { cachedClientId = cid; prepareClient(cid); }
+      });
       UI.toast('先にClient IDを登録してください');
       App.go('settings');
       return;
     }
-    // 事前準備済みでない場合、ここでロード（ポップアップブロックされる可能性あり）
-    if (!tokenClient || tokenClientId !== cid) {
-      await prepareClient(cid);
+    if (!tokenClient || tokenClientId !== cachedClientId) {
+      // tokenClient未準備 → 裏で準備しつつユーザに再タップを促す
+      prepareClient(cachedClientId).then(() => {
+        UI.toast('準備完了。もう一度「Googleでログイン」を押してください');
+      }).catch((e) => {
+        UI.toast('準備失敗：' + (e.message || '不明'));
+      });
+      UI.toast('ログイン準備中…数秒後に再度押してください');
+      return;
     }
-    return new Promise((resolve, reject) => {
-      tokenClient.callback = async (resp) => {
-        if (resp.error) { reject(new Error(resp.error)); return; }
-        const token = resp.access_token;
-        const expiresAt = Date.now() + (Number(resp.expires_in) || 3600) * 1000;
-        await DB.settings.set('gmailToken', { token, expiresAt });
+    // ★ ここが肝：awaitなしで requestAccessToken を即時呼び出す
+    tokenClient.callback = (resp) => {
+      if (resp.error) {
+        UI.toast('ログイン失敗：' + resp.error);
+        return;
+      }
+      const token = resp.access_token;
+      const expiresAt = Date.now() + (Number(resp.expires_in) || 3600) * 1000;
+      // 保存はpopup後でOK
+      DB.settings.set('gmailToken', { token, expiresAt }).then(() => {
         UI.toast('ログインしました');
         App.route();
-        resolve(token);
-      };
-      try {
-        tokenClient.requestAccessToken({ prompt: '' });
-      } catch (e) { reject(e); }
-    });
+      });
+    };
+    try {
+      tokenClient.requestAccessToken({ prompt: '' });
+    } catch (e) {
+      UI.toast('ログイン起動失敗：' + (e.message || '不明'));
+    }
   }
+
+  // 旧API互換（既存呼び出しがあれば動くように）
+  function signIn() { signInDirect(); }
 
   // ── 既存トークンを使うか、対話なしで再取得（バックグラウンド更新は不可な場合あり） ──
   async function ensureToken() {
@@ -322,5 +345,5 @@ const Gmail = (() => {
     return { subject, date: headerDate(h), items: [{ title: subject, price: null }] };
   }
 
-  return { openImport, signIn, prepareClient };
+  return { openImport, signIn, signInDirect, prepareClient };
 })();

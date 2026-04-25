@@ -4,14 +4,14 @@ const Library = (() => {
 
   async function render() {
     const container = el('div');
-    const [books, fields, characters] = await Promise.all([
-      DB.books.all(), DB.customFields.all(), DB.characters.all()
+    const [books, fields, chars1, chars2] = await Promise.all([
+      DB.books.all(), DB.customFields.all(), DB.characters1.all(), DB.characters2.all()
     ]);
 
     const head = el('div', { class: 'section-head' }, [
       el('h2', {}, `蔵書：${books.length}冊`),
       el('div', { class: 'row', style: 'flex:0 0 auto; gap:6px' }, [
-        el('button', { type: 'button', class: 'btn btn-sm btn-primary', onclick: () => openForm(null, fields, characters) }, '＋追加'),
+        el('button', { type: 'button', class: 'btn btn-sm btn-primary', onclick: () => openForm(null, fields, chars1, chars2) }, '＋追加'),
         el('button', { type: 'button', class: 'btn btn-sm btn-ghost', onclick: () => Gmail.openImport() }, 'Gmail取込')
       ])
     ]);
@@ -78,7 +78,7 @@ const Library = (() => {
         return;
       }
       list.appendChild(el('div', { class: 'muted', style: 'font-size:12px;margin-bottom:6px' }, `${filtered.length}件`));
-      filtered.forEach((b) => list.appendChild(card(b, fields)));
+      filtered.forEach((b) => list.appendChild(card(b, fields, chars1, chars2)));
     }
 
     input.addEventListener('input', renderList);
@@ -93,7 +93,7 @@ const Library = (() => {
     return b.coupling || '';
   }
 
-  function card(b, fields) {
+  function card(b, fields, chars1, chars2) {
     const c = el('div', { class: 'card', onclick: () => openFormById(b.id) });
     c.appendChild(el('div', { class: 'card-title' }, b.title || '(無題)'));
     const sub = [];
@@ -121,13 +121,13 @@ const Library = (() => {
   }
 
   async function openFormById(id) {
-    const [book, fields, characters] = await Promise.all([
-      DB.books.get(id), DB.customFields.all(), DB.characters.all()
+    const [book, fields, chars1, chars2] = await Promise.all([
+      DB.books.get(id), DB.customFields.all(), DB.characters1.all(), DB.characters2.all()
     ]);
-    openForm(book, fields, characters);
+    openForm(book, fields, chars1, chars2);
   }
 
-  function openForm(existing, fields, characters) {
+  function openForm(existing, fields, chars1, chars2) {
     const b = existing ? { ...existing } : {
       id: uid('book_'),
       title: '', circleName: '', authorName: '',
@@ -161,8 +161,8 @@ const Library = (() => {
     body.appendChild(formField('作家名', 'authorName', b.authorName));
     body.appendChild(formField('Twitter (X)', 'twitter', b.twitter, 'text', '@username または URL'));
 
-    // ── カップリング（人名×人名） ──
-    body.appendChild(couplingField(b, characters));
+    // ── カップリング（1枠×2枠） ──
+    body.appendChild(couplingField(b, chars1, chars2));
 
     const priceQtyRow = el('div', { class: 'row' });
     priceQtyRow.appendChild(formField('金額', 'price', b.price, 'number'));
@@ -214,6 +214,26 @@ const Library = (() => {
     } }, '保存'));
 
     UI.openModal({ title: existing ? '同人誌を編集' : '同人誌を追加', body, footer: foot });
+  }
+
+  // ── カップリングフィールド ──
+  function couplingField(b, chars1, chars2) {
+    const wrap = el('div', { class: 'field' });
+    wrap.appendChild(el('label', {}, 'カップリング'));
+
+    const row = el('div', { class: 'coupling-row' });
+    const left  = makeCharSelect('couplingLeft',  b.couplingLeft,  chars1);
+    const cross = el('span', { class: 'coupling-cross' }, '×');
+    const right = makeCharSelect('couplingRight', b.couplingRight, chars2);
+
+    row.appendChild(left);
+    row.appendChild(cross);
+    row.appendChild(right);
+    wrap.appendChild(row);
+
+    wrap.appendChild(el('div', { class: 'muted', style: 'font-size:11px;margin-top:4px' },
+      '1枠（左）・2枠（右）の人名は「設定」→「人名リスト」で登録できます'));
+    return wrap;
   }
 
   // ── OCRパネル：画像＋認識結果からのコピペ ──
@@ -323,27 +343,6 @@ const Library = (() => {
       sel.appendChild(opt);
     }
     return el('div', { class: 'field' }, [el('label', {}, label), sel]);
-  }
-
-  function couplingField(b, characters) {
-    const wrap = el('div', { class: 'field' });
-    wrap.appendChild(el('label', {}, 'カップリング'));
-
-    const row = el('div', { class: 'coupling-row' });
-
-    const left  = makeCharSelect('couplingLeft',  b.couplingLeft,  characters);
-    const cross = el('span', { class: 'coupling-cross' }, '×');
-    const right = makeCharSelect('couplingRight', b.couplingRight, characters);
-
-    row.appendChild(left);
-    row.appendChild(cross);
-    row.appendChild(right);
-    wrap.appendChild(row);
-
-    const hint = el('div', { class: 'muted', style: 'font-size:11px;margin-top:4px' },
-      '※ 人名は「設定」→「人名（キャラ）リスト」で追加できます');
-    wrap.appendChild(hint);
-    return wrap;
   }
 
   function makeCharSelect(name, value, characters) {

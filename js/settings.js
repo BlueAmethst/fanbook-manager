@@ -16,29 +16,51 @@ const Settings = (() => {
     container.appendChild(el('h2', {}, '人名（キャラ）リスト'));
     container.appendChild(el('p', { class: 'muted' },
       'カップリング欄で選べる人名を登録します。1行に1人ずつ書いてください。'));
+    container.appendChild(el('p', { class: 'muted' },
+      '「1枠」に登録した人名は左側（攻め/主）にのみ表示、「2枠」に登録した人名は右側（受け/相手）にのみ表示されます。'));
 
-    const characters = await DB.characters.all();
-    const charsTextarea = el('textarea', {
-      id: 'characters-text',
-      style: 'min-height:120px'
-    }, characters.map((c) => c.name).join('\n'));
-    container.appendChild(el('div', { class: 'field' }, [charsTextarea]));
-    container.appendChild(el('button', {
-      type: 'button',
-      class: 'btn btn-primary btn-block',
-      onclick: async () => {
-        const lines = charsTextarea.value.split('\n').map((s) => s.trim()).filter(Boolean);
-        const seen = new Set();
-        const list = [];
-        for (const name of lines) {
-          if (seen.has(name)) continue;
-          seen.add(name);
-          list.push({ id: uid('char_'), name });
+    const [chars1, chars2] = await Promise.all([DB.characters1.all(), DB.characters2.all()]);
+
+    const chars1Textarea = el('textarea', { style: 'min-height:100px' },
+      chars1.map((c) => c.name).join('\n'));
+    const chars2Textarea = el('textarea', { style: 'min-height:100px' },
+      chars2.map((c) => c.name).join('\n'));
+
+    function makeCharSaveBtn(label, textarea, dbStore) {
+      return el('button', {
+        type: 'button',
+        class: 'btn btn-primary btn-block',
+        style: 'margin-top:6px',
+        onclick: async () => {
+          const lines = textarea.value.split('\n').map((s) => s.trim()).filter(Boolean);
+          const seen = new Set();
+          const list = [];
+          for (const name of lines) {
+            if (seen.has(name)) continue;
+            seen.add(name);
+            list.push({ id: uid('char_'), name });
+          }
+          await dbStore.save(list);
+          UI.toast(`${label} ${list.length}件を保存しました`);
         }
-        await DB.characters.save(list);
-        UI.toast(`人名 ${list.length}件を保存しました`);
-      }
-    }, '人名リストを保存'));
+      }, `${label}を保存`);
+    }
+
+    const charsRow = el('div', { class: 'coupling-chars-row' });
+
+    const box1 = el('div', { class: 'coupling-chars-box' });
+    box1.appendChild(el('div', { class: 'coupling-chars-label' }, '1枠（左側・攻め）'));
+    box1.appendChild(el('div', { class: 'field' }, [chars1Textarea]));
+    box1.appendChild(makeCharSaveBtn('1枠', chars1Textarea, DB.characters1));
+
+    const box2 = el('div', { class: 'coupling-chars-box' });
+    box2.appendChild(el('div', { class: 'coupling-chars-label' }, '2枠（右側・受け）'));
+    box2.appendChild(el('div', { class: 'field' }, [chars2Textarea]));
+    box2.appendChild(makeCharSaveBtn('2枠', chars2Textarea, DB.characters2));
+
+    charsRow.appendChild(box1);
+    charsRow.appendChild(box2);
+    container.appendChild(charsRow);
 
     container.appendChild(el('div', { class: 'hr' }));
 
@@ -142,14 +164,9 @@ const Settings = (() => {
     btnRow.appendChild(el('button', {
       type: 'button',
       class: 'btn btn-primary btn-block',
-      onclick: async (e) => {
-        // クリック直後にrequestAccessTokenを呼ぶ必要がある（ポップアップブロック対策）
-        e.preventDefault();
-        try {
-          await Gmail.signIn();
-        } catch (err) {
-          UI.toast('ログイン失敗：' + (err.message || '不明'));
-        }
+      onclick: () => {
+        // ★ async/awaitを使わない：iOSのポップアップブロック対策
+        Gmail.signInDirect();
       }
     }, connected ? '再ログイン' : 'Googleでログイン'));
     if (connected) {
@@ -219,6 +236,11 @@ const Settings = (() => {
     dataRow.appendChild(importBtn);
     dataRow.appendChild(importInput);
     container.appendChild(dataRow);
+
+    // ──── バージョン表示 ────
+    container.appendChild(el('div', { class: 'hr' }));
+    container.appendChild(el('div', { class: 'version-info' },
+      `アプリバージョン：${typeof APP_VERSION !== 'undefined' ? APP_VERSION : '不明'}`));
 
     return container;
   }
