@@ -484,6 +484,24 @@ a { color: var(--primary); text-decoration: none; }
   font-weight: 600;
 }
 
+/* ========== アプリ設定（リスト編集） ========== */
+.applist-row {
+  display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 6px;
+}
+.applist-box {
+  flex: 1; min-width: 180px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: 10px 12px;
+}
+.applist-label {
+  font-size: 13px; font-weight: 700;
+  color: var(--accent);
+  margin-bottom: 6px;
+  letter-spacing: 0.04em;
+}
+
 /* ========== Characters 1枠/2枠 ========== */
 .coupling-chars-row {
   display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 6px;
