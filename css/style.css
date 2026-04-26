@@ -502,6 +502,95 @@ a { color: var(--primary); text-decoration: none; }
   padding: 10px 0 4px;
 }
 
+/* ========== 一括選択モード ========== */
+.bulk-bar {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 8px 10px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  margin-bottom: 10px;
+}
+.bulk-checkbox {
+  width: 22px; height: 22px;
+  flex-shrink: 0;
+  margin-right: 8px;
+  accent-color: var(--primary);
+}
+.card-selectable {
+  display: flex; align-items: flex-start;
+  gap: 4px;
+}
+.card-selectable .card-title,
+.card-selectable .card-sub,
+.card-selectable .card-body,
+.card-selectable .chips {
+  flex: 1;
+}
+.card-selected {
+  background: var(--primary-light) !important;
+  border-color: var(--primary) !important;
+  box-shadow: 0 0 0 2px var(--primary-light);
+}
+
+/* ========== 一括編集モーダル ========== */
+.bulk-section {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: 10px 12px;
+  margin-bottom: 10px;
+}
+.bulk-section-head {
+  display: flex; align-items: center;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+/* ========== 未購入リスト ========== */
+.wish-card {
+  display: flex; align-items: flex-start; gap: 4px;
+}
+.wish-card .bulk-checkbox + div {
+  flex: 1;
+}
+.wish-btn-row {
+  display: flex; gap: 6px; flex-wrap: wrap;
+  margin-top: 10px;
+}
+.wish-btn-row .btn { flex: 1; min-width: 100px; }
+.chip-space {
+  background: var(--primary-light);
+  color: var(--primary);
+  border-color: var(--primary);
+  font-weight: 600;
+}
+
+/* イベント詳細：未購入リンクバー */
+.wishlist-link-bar {
+  display: flex; align-items: center; justify-content: space-between;
+  flex-wrap: wrap; gap: 8px;
+  background: var(--accent-light);
+  border: 1.5px solid var(--accent);
+  border-radius: var(--r);
+  padding: 10px 14px;
+  margin-bottom: 10px;
+  font-size: 14px;
+  color: var(--accent);
+  font-weight: 600;
+}
+.wishlist-linked {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: 10px 12px;
+  margin-bottom: 10px;
+}
+.wishlist-linked summary {
+  cursor: pointer; font-weight: 600;
+  font-size: 14px; color: var(--text);
+}
+
 /* ========== Filter row ========== */
 .filter-row {
   display: flex; gap: 8px; flex-wrap: wrap;
@@ -618,6 +707,24 @@ a { color: var(--primary); text-decoration: none; }
   background: var(--accent-light); color: var(--accent);
   border: 1px solid rgba(184,152,122,0.30);
   margin-left: 6px;
+}
+.field-scope-badge {
+  display: inline-block; padding: 2px 8px;
+  border-radius: 999px; font-size: 11px; font-weight: 600;
+  margin-left: 4px;
+  border: 1px solid var(--border);
+}
+.field-scope-badge.scope-both {
+  background: var(--primary-light); color: var(--primary);
+  border-color: rgba(107,168,168,0.30);
+}
+.field-scope-badge.scope-books {
+  background: var(--accent-light); color: var(--accent);
+  border-color: rgba(184,152,122,0.30);
+}
+.field-scope-badge.scope-wishlist {
+  background: rgba(216,160,160,0.15); color: var(--danger);
+  border-color: rgba(192,120,120,0.30);
 }
 
 /* ========== Misc ========== */
