@@ -239,8 +239,11 @@ const Wishlist = (() => {
   }
 
   // ── 編集／追加フォーム ──
-  function openForm(existing, fields, chars1, chars2, events, appLists) {
+  async function openForm(existing, fields, chars1, chars2, events, appLists) {
     appLists = appLists || { eventNames: [], bookSizes: DEFAULT_BOOK_SIZES, ratings: DEFAULT_RATINGS };
+    const fcs = await DB.defaultFieldConfig.getMultiple(
+      CONFIGURABLE_DEFAULT_FIELDS.filter((d) => d.page === 'both' || d.page === 'wishlist').map((d) => d.key)
+    );
     const b = existing ? { ...existing } : {
       id: uid('wish_'),
       title: '', circleName: '', authorName: '',
@@ -308,28 +311,33 @@ const Wishlist = (() => {
 
     xParseBtn.addEventListener('click', () => runParse(xTextarea.value));
 
-    xPasteBtn.addEventListener('click', async () => {
+    async function tryClipboardPaste(showEmptyToast = true) {
       try {
         const text = await navigator.clipboard.readText();
         if (!text || !text.trim()) {
-          UI.toast('クリップボードが空です。先に写真アプリで「テキストをコピー」してください');
-          return;
+          if (showEmptyToast) UI.toast('クリップボードが空です。先に写真アプリで「テキストをコピー」してください');
+          return false;
         }
         xTextarea.value = text;
         runParse(text);
+        return true;
       } catch (err) {
-        UI.toast('クリップボードを読み取れませんでした。textarea に手動で貼り付けてください');
+        if (showEmptyToast) UI.toast('クリップボードを読み取れませんでした。textarea に手動で貼り付けてください');
+        return false;
       }
-    });
+    }
+    xPasteBtn.addEventListener('click', () => tryClipboardPaste(true));
 
-    body.appendChild(formField('書名', 'title', b.title));
-    body.appendChild(formField('サークル名', 'circleName', b.circleName));
-    body.appendChild(formField('作家名', 'authorName', b.authorName));
-    body.appendChild(formField('Twitter (X)', 'twitter', b.twitter, 'text', '@username または URL'));
+    body.appendChild(renderDefaultField('title',      '書名',         'title',       b.title,       fcs));
+    body.appendChild(renderDefaultField('circleName', 'サークル名',   'circleName',  b.circleName,  fcs));
+    body.appendChild(renderDefaultField('authorName', '作家名',       'authorName',  b.authorName,  fcs));
+    body.appendChild(renderDefaultField('twitter',    'Twitter (X)', 'twitter',     b.twitter,     fcs,
+      { placeholder: '@username または URL' }));
 
     body.appendChild(couplingField(b, chars1, chars2));
 
-    body.appendChild(formField('スペース番号', 'spaceCode', b.spaceCode, 'text', '例：西2ヤ18b'));
+    body.appendChild(renderDefaultField('spaceCode', 'スペース番号', 'spaceCode', b.spaceCode, fcs,
+      { placeholder: '例：西2ヤ18b' }));
 
     body.appendChild(selectField('イベント名', 'eventName', b.eventName, appLists.eventNames,
       '※ 選択肢は「設定」→「アプリ設定」で追加できます'));
@@ -340,20 +348,15 @@ const Wishlist = (() => {
     detailRow.appendChild(selectField('サイズ', 'size', b.size, appLists.bookSizes));
     body.appendChild(detailRow);
 
-    body.appendChild(el('div', { class: 'field' }, [
-      el('label', {}, 'イベント限定情報・ノベルティ'),
-      el('textarea', { name: 'eventNotes', style: 'min-height:60px' }, b.eventNotes || '')
-    ]));
+    body.appendChild(renderDefaultField('eventNotes', 'イベント限定情報・ノベルティ', 'eventNotes',
+      b.eventNotes, fcs));
 
     // カスタムフィールド（同人管理と共通）
     for (const f of fields || []) {
       body.appendChild(renderCustomField(f, b.customFields ? b.customFields[f.id] : ''));
     }
 
-    body.appendChild(el('div', { class: 'field' }, [
-      el('label', {}, '備考'),
-      el('textarea', { name: 'notes' }, b.notes || '')
-    ]));
+    body.appendChild(renderDefaultField('notes', '備考', 'notes', b.notes, fcs));
 
     const foot = el('div', { style: 'display:flex;gap:10px;flex:1' });
     if (existing) {
@@ -389,6 +392,11 @@ const Wishlist = (() => {
     } }, '保存'));
 
     UI.openModal({ title: existing ? '未購入本を編集' : '未購入本を追加', body, footer: foot });
+
+    // 新規追加時のみ、モーダル表示直後にクリップボード自動取込を試行
+    if (!existing) {
+      setTimeout(() => { tryClipboardPaste(false); }, 100);
+    }
   }
 
   // ── X取込パネル（複数まとめて投入） ──
@@ -396,9 +404,9 @@ const Wishlist = (() => {
     appLists = appLists || { eventNames: [], bookSizes: DEFAULT_BOOK_SIZES, ratings: DEFAULT_RATINGS };
     const body = el('div');
     body.appendChild(el('div', { class: 'ocr-help' },
-      '複数のXポストを「---」（ハイフン3つ）で区切って貼り付けてください。それぞれ自動解析→候補リストとして表示します。'));
+      '複数のXポストを「---」「...」「…」のいずれかで区切って貼り付けてください。それぞれ自動解析→候補リストとして表示します。'));
     const ta = el('textarea', { class: 'ocr-paste-textarea', rows: '12',
-      placeholder: '投稿1\n\n---\n\n投稿2\n\n---\n\n投稿3' });
+      placeholder: '投稿1\n\n...\n\n投稿2\n\n...\n\n投稿3' });
     body.appendChild(ta);
 
     const btnRow = el('div', { class: 'row', style: 'margin-top:6px' });
@@ -417,23 +425,33 @@ const Wishlist = (() => {
     saveBtn.style.display = 'none';
     foot.appendChild(saveBtn);
 
-    pasteBtn.addEventListener('click', async () => {
+    function runImportParse() {
+      result.innerHTML = '';
+      const blocks = ta.value.split(/\n[ \t]*(?:---+|\.{3,}|…+)[ \t]*(?:\n|$)/)
+        .map((b) => b.trim()).filter(Boolean);
+      return blocks;
+    }
+
+    async function tryImportPaste(showEmptyToast = true) {
       try {
         const text = await navigator.clipboard.readText();
         if (!text || !text.trim()) {
-          UI.toast('クリップボードが空です');
-          return;
+          if (showEmptyToast) UI.toast('クリップボードが空です');
+          return false;
         }
         ta.value = text;
-        UI.toast('貼り付け完了。「解析」を押してください');
+        // 自動解析もする
+        parseBtn.click();
+        return true;
       } catch (err) {
-        UI.toast('クリップボードを読み取れませんでした');
+        if (showEmptyToast) UI.toast('クリップボードを読み取れませんでした');
+        return false;
       }
-    });
+    }
+    pasteBtn.addEventListener('click', () => tryImportPaste(true));
 
     parseBtn.addEventListener('click', () => {
-      result.innerHTML = '';
-      const blocks = ta.value.split(/\n\s*---+\s*\n/).map((b) => b.trim()).filter(Boolean);
+      const blocks = runImportParse();
       if (!blocks.length) { UI.toast('テキストを入力してください'); return; }
       const candidates = blocks.map((blk) => OCR.parseXPost(blk, {
         characters1: chars1, characters2: chars2,
@@ -496,6 +514,43 @@ const Wishlist = (() => {
     });
 
     UI.openModal({ title: 'X投稿から一括取込', body, footer: foot });
+
+    // モーダル開いた直後にクリップボード自動取込を試行
+    setTimeout(() => { tryImportPaste(false); }, 100);
+  }
+
+  // デフォルト項目の入力形式に応じたフィールドレンダリング
+  function renderDefaultField(key, label, name, value, fcs, opts = {}) {
+    const cfg = fcs[key] || null;
+    const def = CONFIGURABLE_DEFAULT_FIELDS.find((d) => d.key === key);
+    const type = cfg ? cfg.type : (def ? def.defaultType : 'text');
+
+    if (type === 'select' && cfg && cfg.options && cfg.options.length) {
+      const sel = el('select', { name });
+      sel.appendChild(el('option', { value: '' }, '（未選択）'));
+      let matched = false;
+      for (const o of cfg.options) {
+        const opt = el('option', { value: o }, o);
+        if (value === o) { opt.selected = true; matched = true; }
+        sel.appendChild(opt);
+      }
+      if (value && !matched) {
+        const opt = el('option', { value }, value + '（リスト外）');
+        opt.selected = true;
+        sel.appendChild(opt);
+      }
+      return el('div', { class: 'field' }, [el('label', {}, label), sel]);
+    }
+    if (type === 'textarea') {
+      return el('div', { class: 'field' }, [
+        el('label', {}, label),
+        el('textarea', { name, placeholder: opts.placeholder || '' }, value == null ? '' : String(value))
+      ]);
+    }
+    return el('div', { class: 'field' }, [
+      el('label', {}, label),
+      el('input', { type: 'text', name, value: value == null ? '' : String(value), placeholder: opts.placeholder || '' })
+    ]);
   }
 
   // ── ヘルパー ──

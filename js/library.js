@@ -4,15 +4,16 @@ const Library = (() => {
 
   async function render() {
     const container = el('div');
-    const [books, allFields, chars1, chars2] = await Promise.all([
-      DB.books.all(), DB.customFields.all(), DB.characters1.all(), DB.characters2.all()
+    const [books, allFields, chars1, chars2, purchaseLocs] = await Promise.all([
+      DB.books.all(), DB.customFields.all(), DB.characters1.all(), DB.characters2.all(),
+      DB.appLists.get('purchaseLocations', PURCHASE_LOCATIONS)
     ]);
     const fields = filterFieldsByScope(allFields, 'books');
 
     const head = el('div', { class: 'section-head' }, [
       el('h2', {}, `蔵書：${books.length}冊`),
       el('div', { class: 'row', style: 'flex:0 0 auto; gap:6px' }, [
-        el('button', { type: 'button', class: 'btn btn-sm btn-primary', onclick: () => openForm(null, fields, chars1, chars2) }, '＋追加'),
+        el('button', { type: 'button', class: 'btn btn-sm btn-primary', onclick: () => openForm(null, fields, chars1, chars2, purchaseLocs) }, '＋追加'),
         el('button', { type: 'button', class: 'btn btn-sm btn-ghost', onclick: () => Gmail.openImport() }, 'Gmail取込')
       ])
     ]);
@@ -28,7 +29,7 @@ const Library = (() => {
     const filterRow = el('div', { class: 'filter-row' });
     const locSel = el('select', { 'aria-label': '購入場所で絞り込み' });
     locSel.appendChild(el('option', { value: '' }, '購入場所：すべて'));
-    for (const loc of PURCHASE_LOCATIONS) locSel.appendChild(el('option', { value: loc }, loc));
+    for (const loc of purchaseLocs) locSel.appendChild(el('option', { value: loc }, loc));
     const sortSel = el('select', { 'aria-label': '並び替え' });
     [
       ['date_desc', '新しい順'],
@@ -90,7 +91,7 @@ const Library = (() => {
       const ids = [...selectMode.selected];
       const targets = books.filter((b) => ids.includes(b.id));
       Bulk.openBulkEditModal({
-        targets, fields, chars1, chars2, mode: 'books',
+        targets, fields, chars1, chars2, mode: 'books', purchaseLocs,
         onSave: async (patch) => {
           for (const t of targets) Bulk.applyPatch(t, patch);
           for (const t of targets) await DB.books.save(t);
@@ -216,14 +217,20 @@ const Library = (() => {
   }
 
   async function openFormById(id) {
-    const [book, allFields, chars1, chars2] = await Promise.all([
-      DB.books.get(id), DB.customFields.all(), DB.characters1.all(), DB.characters2.all()
+    const [book, allFields, chars1, chars2, purchaseLocs] = await Promise.all([
+      DB.books.get(id), DB.customFields.all(), DB.characters1.all(), DB.characters2.all(),
+      DB.appLists.get('purchaseLocations', PURCHASE_LOCATIONS)
     ]);
     const fields = filterFieldsByScope(allFields, 'books');
-    openForm(book, fields, chars1, chars2);
+    openForm(book, fields, chars1, chars2, purchaseLocs);
   }
 
-  function openForm(existing, fields, chars1, chars2) {
+  async function openForm(existing, fields, chars1, chars2, purchaseLocs) {
+    purchaseLocs = purchaseLocs || PURCHASE_LOCATIONS;
+    // デフォルト項目の入力形式設定を読込
+    const fcs = await DB.defaultFieldConfig.getMultiple(
+      CONFIGURABLE_DEFAULT_FIELDS.filter((d) => d.page === 'both' || d.page === 'books').map((d) => d.key)
+    );
     const b = existing ? { ...existing } : {
       id: uid('book_'),
       title: '', circleName: '', authorName: '',
@@ -285,25 +292,29 @@ const Library = (() => {
 
     parseBtn.addEventListener('click', () => runParseColophon(ocrTextarea.value || ''));
 
-    pasteBtn.addEventListener('click', async () => {
+    async function tryClipboardPaste(showEmptyToast = true) {
       try {
         const text = await navigator.clipboard.readText();
         if (!text || !text.trim()) {
-          UI.toast('クリップボードが空です。先に写真アプリで「テキストをコピー」してください');
-          return;
+          if (showEmptyToast) UI.toast('クリップボードが空です。先に写真アプリで「テキストをコピー」してください');
+          return false;
         }
         ocrTextarea.value = text;
         runParseColophon(text);
+        return true;
       } catch (err) {
-        UI.toast('クリップボードを読み取れませんでした。textarea に手動で貼り付けてください');
+        if (showEmptyToast) UI.toast('クリップボードを読み取れませんでした。textarea に手動で貼り付けてください');
+        return false;
       }
-    });
+    }
+    pasteBtn.addEventListener('click', () => tryClipboardPaste(true));
 
-    // ── 基本フィールド ──
-    body.appendChild(formField('書名', 'title', b.title));
-    body.appendChild(formField('サークル名', 'circleName', b.circleName));
-    body.appendChild(formField('作家名', 'authorName', b.authorName));
-    body.appendChild(formField('Twitter (X)', 'twitter', b.twitter, 'text', '@username または URL'));
+    // ── 基本フィールド（デフォルト項目設定を反映） ──
+    body.appendChild(renderDefaultField('title',      '書名',         'title',       b.title,       fcs));
+    body.appendChild(renderDefaultField('circleName', 'サークル名',   'circleName',  b.circleName,  fcs));
+    body.appendChild(renderDefaultField('authorName', '作家名',       'authorName',  b.authorName,  fcs));
+    body.appendChild(renderDefaultField('twitter',    'Twitter (X)', 'twitter',     b.twitter,     fcs,
+      { placeholder: '@username または URL' }));
 
     // ── カップリング（1枠×2枠） ──
     body.appendChild(couplingField(b, chars1, chars2));
@@ -314,17 +325,14 @@ const Library = (() => {
     body.appendChild(priceQtyRow);
 
     body.appendChild(formField('購入日付', 'purchaseDate', b.purchaseDate, 'date'));
-    body.appendChild(selectField('購入場所', 'purchaseLocation', b.purchaseLocation, PURCHASE_LOCATIONS));
+    body.appendChild(selectField('購入場所', 'purchaseLocation', b.purchaseLocation, purchaseLocs));
 
     // ── カスタムフィールド ──
     for (const f of fields || []) {
       body.appendChild(renderCustomField(f, b.customFields ? b.customFields[f.id] : ''));
     }
 
-    body.appendChild(el('div', { class: 'field' }, [
-      el('label', {}, '備考'),
-      el('textarea', { name: 'notes' }, b.notes || '')
-    ]));
+    body.appendChild(renderDefaultField('notes', '備考', 'notes', b.notes, fcs));
 
     // ── フッター ──
     const foot = el('div', { style: 'display:flex;gap:10px;flex:1' });
@@ -358,6 +366,45 @@ const Library = (() => {
     } }, '保存'));
 
     UI.openModal({ title: existing ? '同人誌を編集' : '同人誌を追加', body, footer: foot });
+
+    // モーダル表示後、新規追加時のみクリップボード自動取込を試行
+    if (!existing) {
+      setTimeout(() => { tryClipboardPaste(false); }, 100);
+    }
+  }
+
+  // デフォルト項目の入力形式に応じたフィールドレンダリング
+  function renderDefaultField(key, label, name, value, fcs, opts = {}) {
+    const cfg = fcs[key] || null;
+    const def = CONFIGURABLE_DEFAULT_FIELDS.find((d) => d.key === key);
+    const type = cfg ? cfg.type : (def ? def.defaultType : 'text');
+
+    if (type === 'select' && cfg && cfg.options && cfg.options.length) {
+      const sel = el('select', { name });
+      sel.appendChild(el('option', { value: '' }, '（未選択）'));
+      let matched = false;
+      for (const o of cfg.options) {
+        const opt = el('option', { value: o }, o);
+        if (value === o) { opt.selected = true; matched = true; }
+        sel.appendChild(opt);
+      }
+      if (value && !matched) {
+        const opt = el('option', { value }, value + '（リスト外）');
+        opt.selected = true;
+        sel.appendChild(opt);
+      }
+      return el('div', { class: 'field' }, [el('label', {}, label), sel]);
+    }
+    if (type === 'textarea') {
+      return el('div', { class: 'field' }, [
+        el('label', {}, label),
+        el('textarea', { name, placeholder: opts.placeholder || '' }, value == null ? '' : String(value))
+      ]);
+    }
+    return el('div', { class: 'field' }, [
+      el('label', {}, label),
+      el('input', { type: 'text', name, value: value == null ? '' : String(value), placeholder: opts.placeholder || '' })
+    ]);
   }
 
   // ── カップリングフィールド ──

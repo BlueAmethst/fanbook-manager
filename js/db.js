@@ -149,6 +149,18 @@ const DB = (() => {
     characters2: {
       all: async () => (await get(STORES.settings, 'characters2'))?.value || [],
       save: async (list) => put(STORES.settings, { key: 'characters2', value: list })
+    },
+    defaultFieldConfig: {
+      get: async (key) => (await get(STORES.settings, 'dfc_' + key))?.value || null,
+      set: async (key, cfg) => put(STORES.settings, { key: 'dfc_' + key, value: cfg }),
+      getMultiple: async (keys) => {
+        const result = {};
+        await Promise.all(keys.map(async (k) => {
+          const v = await get(STORES.settings, 'dfc_' + k);
+          result[k] = v?.value || null;
+        }));
+        return result;
+      }
     }
   };
 })();
@@ -182,6 +194,23 @@ const PURCHASE_LOCATIONS = [
 const DEFAULT_BOOK_SIZES = ['A5', 'B5', 'A4', '文庫', 'その他'];
 const DEFAULT_RATINGS = ['全年齢', 'R-18', 'R-18Nあり', 'R-18Nなし', 'R-15'];
 const DEFAULT_EVENT_NAMES = [];
+
+// デフォルト項目の入力形式設定対象フィールド
+const CONFIGURABLE_DEFAULT_FIELDS = [
+  { key: 'title',      label: '書名',                  page: 'both',     defaultType: 'text' },
+  { key: 'circleName', label: 'サークル名',             page: 'both',     defaultType: 'text' },
+  { key: 'authorName', label: '作家名',                 page: 'both',     defaultType: 'text' },
+  { key: 'twitter',    label: 'Twitter (X)',           page: 'both',     defaultType: 'text' },
+  { key: 'spaceCode',  label: 'スペース番号',           page: 'wishlist', defaultType: 'text' },
+  { key: 'eventNotes', label: 'ノベルティ・限定情報',   page: 'wishlist', defaultType: 'textarea' },
+  { key: 'notes',      label: '備考',                  page: 'both',     defaultType: 'textarea' }
+];
+
+const DEFAULT_FIELD_TYPES = [
+  { value: 'text',     label: '短文テキスト' },
+  { value: 'select',   label: '選択肢' },
+  { value: 'textarea', label: '長文・備考' }
+];
 
 const SPACE_STATUSES = [
   { key: 'none',      label: '未設定',    color: 'transparent' },

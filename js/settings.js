@@ -75,10 +75,11 @@ const Settings = (() => {
     container.appendChild(el('p', { class: 'muted' },
       '同人管理・未購入リストの「イベント名」「サイズ」「レーティング」の選択肢を自由に変更できます。1行に1つずつ書いてください。'));
 
-    const [eventNames, bookSizes, ratings] = await Promise.all([
+    const [eventNames, bookSizes, ratings, purchaseLocs] = await Promise.all([
       DB.appLists.get('eventNames', DEFAULT_EVENT_NAMES),
       DB.appLists.get('bookSizes',  DEFAULT_BOOK_SIZES),
-      DB.appLists.get('ratings',    DEFAULT_RATINGS)
+      DB.appLists.get('ratings',    DEFAULT_RATINGS),
+      DB.appLists.get('purchaseLocations', PURCHASE_LOCATIONS)
     ]);
 
     function appListBox(label, list, key, defaultValue, hint) {
@@ -112,7 +113,105 @@ const Settings = (() => {
       '例：スパコミ／コミケ／コミティアなど'));
     appRow.appendChild(appListBox('書籍サイズ', bookSizes, 'bookSizes', DEFAULT_BOOK_SIZES));
     appRow.appendChild(appListBox('レーティング', ratings, 'ratings', DEFAULT_RATINGS));
+    appRow.appendChild(appListBox('購入場所', purchaseLocs, 'purchaseLocations', PURCHASE_LOCATIONS,
+      '同人管理の購入場所セレクトとフィルタで使われます'));
     container.appendChild(appRow);
+
+    container.appendChild(el('div', { class: 'hr' }));
+
+    // ──── デフォルト項目の入力形式 ────
+    container.appendChild(el('h2', {}, 'デフォルト項目の入力形式'));
+    container.appendChild(el('p', { class: 'muted' },
+      '書名・サークル名・作家名などの標準項目を「短文テキスト」「選択肢」「長文」に切り替えできます。「選択肢」を選ぶと毎回タップで選べるようになります。'));
+
+    const fcBox = el('div');
+    container.appendChild(fcBox);
+    const fcs = await DB.defaultFieldConfig.getMultiple(
+      CONFIGURABLE_DEFAULT_FIELDS.map((d) => d.key)
+    );
+
+    function renderDefaultFieldConfigs() {
+      fcBox.innerHTML = '';
+      for (const def of CONFIGURABLE_DEFAULT_FIELDS) {
+        fcBox.appendChild(makeFieldConfigCard(def, fcs[def.key]));
+      }
+    }
+    renderDefaultFieldConfigs();
+
+    function makeFieldConfigCard(def, currentCfg) {
+      const cfg = currentCfg || { type: def.defaultType, options: [] };
+      const card = el('div', { class: 'card' });
+
+      const titleRow = el('div', { style: 'display:flex;align-items:center;gap:6px;flex-wrap:wrap' });
+      titleRow.appendChild(el('span', { class: 'card-title', style: 'margin:0' }, def.label));
+      const pageBadgeText = def.page === 'both' ? '🌐 共通'
+        : def.page === 'books' ? '📚 同人管理' : '🎯 未購入';
+      titleRow.appendChild(el('span', { class: 'field-scope-badge scope-' + def.page }, pageBadgeText));
+      card.appendChild(titleRow);
+
+      // 形式セレクト
+      const typeSel = el('select');
+      for (const t of DEFAULT_FIELD_TYPES) {
+        const opt = el('option', { value: t.value }, t.label);
+        if (cfg.type === t.value) opt.selected = true;
+        typeSel.appendChild(opt);
+      }
+      const typeField = el('div', { class: 'field', style: 'margin-top:8px' }, [
+        el('label', {}, '入力形式'), typeSel
+      ]);
+      card.appendChild(typeField);
+
+      // 選択肢エディタ
+      const optsTa = el('textarea',
+        { style: 'min-height:80px', placeholder: '1行に1つずつ入力' },
+        (cfg.options || []).join('\n'));
+      const optsField = el('div', { class: 'field' }, [
+        el('label', {}, '選択肢（1行につき1つ）'), optsTa
+      ]);
+      card.appendChild(optsField);
+
+      function toggleOpts() {
+        optsField.style.display = typeSel.value === 'select' ? '' : 'none';
+      }
+      typeSel.addEventListener('change', toggleOpts);
+      toggleOpts();
+
+      // 保存・初期化ボタン
+      const btnRow = el('div', { style: 'display:flex;gap:6px;margin-top:6px' });
+      btnRow.appendChild(el('button', {
+        type: 'button', class: 'btn btn-primary btn-sm', style: 'flex:1',
+        onclick: async () => {
+          const newCfg = {
+            type: typeSel.value,
+            options: typeSel.value === 'select'
+              ? optsTa.value.split('\n').map((s) => s.trim()).filter(Boolean)
+              : []
+          };
+          // 重複除去
+          if (newCfg.options.length) {
+            newCfg.options = [...new Set(newCfg.options)];
+          }
+          await DB.defaultFieldConfig.set(def.key, newCfg);
+          fcs[def.key] = newCfg;
+          UI.toast(`「${def.label}」を保存しました`);
+        }
+      }, '保存'));
+      btnRow.appendChild(el('button', {
+        type: 'button', class: 'btn btn-ghost btn-sm',
+        onclick: async () => {
+          if (!(await UI.confirm(`「${def.label}」をデフォルト（${
+            DEFAULT_FIELD_TYPES.find((t) => t.value === def.defaultType).label
+          }）に戻しますか？`))) return;
+          await DB.defaultFieldConfig.set(def.key, null);
+          fcs[def.key] = null;
+          renderDefaultFieldConfigs();
+          UI.toast('初期化しました');
+        }
+      }, 'デフォルトに戻す'));
+      card.appendChild(btnRow);
+
+      return card;
+    }
 
     container.appendChild(el('div', { class: 'hr' }));
 

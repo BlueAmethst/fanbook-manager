@@ -1,5 +1,5 @@
 // ====== アプリバージョン ======
-const APP_VERSION = '2026-04-26 rev.7';
+const APP_VERSION = '2026-04-26 rev.8';
 
 // ====== Router + App bootstrap ======
 const App = (() => {

@@ -4,9 +4,9 @@ const Bulk = (() => {
   const { el, esc } = UI;
 
   // 一括編集モーダルを開く
-  // options: { targets, fields, chars1, chars2, mode, onSave }
+  // options: { targets, fields, chars1, chars2, mode, purchaseLocs, onSave }
   // mode: 'books' | 'wishlist'  （'books' のみ購入場所を表示）
-  function openBulkEditModal({ targets, fields, chars1, chars2, mode, onSave }) {
+  function openBulkEditModal({ targets, fields, chars1, chars2, mode, purchaseLocs, onSave }) {
     const body = el('div');
     body.appendChild(el('div', { class: 'ocr-help' },
       `📝 ${targets.length}件の項目を一括設定します。チェックを入れた項目だけが上書きされます。空欄のまま「適用」を押すとその項目はクリアされます。`));
@@ -36,7 +36,9 @@ const Bulk = (() => {
       ]));
       locSel = el('select', { name: 'bulkLocation', style: 'margin-top:8px' });
       locSel.appendChild(el('option', { value: '' }, '（クリア）'));
-      for (const o of (typeof PURCHASE_LOCATIONS !== 'undefined' ? PURCHASE_LOCATIONS : [])) {
+      const locList = (purchaseLocs && purchaseLocs.length) ? purchaseLocs
+        : (typeof PURCHASE_LOCATIONS !== 'undefined' ? PURCHASE_LOCATIONS : []);
+      for (const o of locList) {
         locSel.appendChild(el('option', { value: o }, o));
       }
       locSection.appendChild(locSel);
