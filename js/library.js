@@ -4,9 +4,10 @@ const Library = (() => {
 
   async function render() {
     const container = el('div');
-    const [books, fields, chars1, chars2] = await Promise.all([
+    const [books, allFields, chars1, chars2] = await Promise.all([
       DB.books.all(), DB.customFields.all(), DB.characters1.all(), DB.characters2.all()
     ]);
+    const fields = filterFieldsByScope(allFields, 'books');
 
     const head = el('div', { class: 'section-head' }, [
       el('h2', {}, `蔵書：${books.length}冊`),
@@ -40,8 +41,73 @@ const Library = (() => {
     filterRow.appendChild(sortSel);
     container.appendChild(filterRow);
 
+    // ── 一括選択モード ──
+    const bulkBar = el('div', { class: 'bulk-bar' });
+    const selectMode = { on: false, selected: new Set() };
+    const toggleBtn = el('button', { type: 'button', class: 'btn btn-sm btn-ghost' }, '☑ 選択モード');
+    const bulkEditBtn = el('button', { type: 'button', class: 'btn btn-sm btn-primary', style: 'display:none' }, '一括設定');
+    const bulkDelBtn  = el('button', { type: 'button', class: 'btn btn-sm btn-danger', style: 'display:none' }, '削除');
+    const selAllBtn   = el('button', { type: 'button', class: 'btn btn-sm btn-ghost', style: 'display:none' }, '表示中すべて選択');
+    const selectedLabel = el('span', { class: 'muted', style: 'font-size:12px' }, '');
+    bulkBar.appendChild(toggleBtn);
+    bulkBar.appendChild(selAllBtn);
+    bulkBar.appendChild(selectedLabel);
+    bulkBar.appendChild(bulkEditBtn);
+    bulkBar.appendChild(bulkDelBtn);
+    container.appendChild(bulkBar);
+
     const list = el('div');
     container.appendChild(list);
+
+    let lastFiltered = [];
+
+    function updateBulkUI() {
+      const n = selectMode.selected.size;
+      selectedLabel.textContent = selectMode.on ? `${n}件選択中` : '';
+      bulkEditBtn.style.display = (selectMode.on && n > 0) ? '' : 'none';
+      bulkDelBtn.style.display  = (selectMode.on && n > 0) ? '' : 'none';
+      selAllBtn.style.display   = selectMode.on ? '' : 'none';
+      toggleBtn.textContent = selectMode.on ? '✕ 選択解除' : '☑ 選択モード';
+    }
+
+    toggleBtn.addEventListener('click', () => {
+      selectMode.on = !selectMode.on;
+      selectMode.selected.clear();
+      renderList();
+      updateBulkUI();
+    });
+
+    selAllBtn.addEventListener('click', () => {
+      const allIds = lastFiltered.map((b) => b.id);
+      const allSelected = allIds.every((id) => selectMode.selected.has(id));
+      if (allSelected) selectMode.selected.clear();
+      else allIds.forEach((id) => selectMode.selected.add(id));
+      renderList();
+      updateBulkUI();
+    });
+
+    bulkEditBtn.addEventListener('click', async () => {
+      const ids = [...selectMode.selected];
+      const targets = books.filter((b) => ids.includes(b.id));
+      Bulk.openBulkEditModal({
+        targets, fields, chars1, chars2, mode: 'books',
+        onSave: async (patch) => {
+          for (const t of targets) Bulk.applyPatch(t, patch);
+          for (const t of targets) await DB.books.save(t);
+          UI.toast(`${targets.length}件を一括更新しました`);
+          App.route();
+        }
+      });
+    });
+
+    bulkDelBtn.addEventListener('click', async () => {
+      const ids = [...selectMode.selected];
+      if (!ids.length) return;
+      if (!(await UI.confirm(`${ids.length}件を削除しますか？`))) return;
+      for (const id of ids) await DB.books.remove(id);
+      UI.toast(`${ids.length}件を削除しました`);
+      App.route();
+    });
 
     function renderList() {
       list.innerHTML = '';
@@ -70,6 +136,8 @@ const Library = (() => {
         }
       });
 
+      lastFiltered = filtered;
+
       if (!filtered.length) {
         list.appendChild(el('div', { class: 'empty' }, [
           el('h2', {}, books.length ? '該当なし' : 'まだ登録されていません'),
@@ -78,7 +146,7 @@ const Library = (() => {
         return;
       }
       list.appendChild(el('div', { class: 'muted', style: 'font-size:12px;margin-bottom:6px' }, `${filtered.length}件`));
-      filtered.forEach((b) => list.appendChild(card(b, fields, chars1, chars2)));
+      filtered.forEach((b) => list.appendChild(card(b, fields, chars1, chars2, selectMode, updateBulkUI)));
     }
 
     input.addEventListener('input', renderList);
@@ -93,8 +161,35 @@ const Library = (() => {
     return b.coupling || '';
   }
 
-  function card(b, fields, chars1, chars2) {
-    const c = el('div', { class: 'card', onclick: () => openFormById(b.id) });
+  function card(b, fields, chars1, chars2, selectMode, updateBulkUI) {
+    const c = el('div', {
+      class: 'card' + (selectMode && selectMode.on ? ' card-selectable' : ''),
+      onclick: () => {
+        if (selectMode && selectMode.on) {
+          if (selectMode.selected.has(b.id)) selectMode.selected.delete(b.id);
+          else selectMode.selected.add(b.id);
+          c.classList.toggle('card-selected', selectMode.selected.has(b.id));
+          const cb = c.querySelector('.bulk-checkbox');
+          if (cb) cb.checked = selectMode.selected.has(b.id);
+          updateBulkUI && updateBulkUI();
+        } else {
+          openFormById(b.id);
+        }
+      }
+    });
+    if (selectMode && selectMode.on) {
+      const cb = el('input', { type: 'checkbox', class: 'bulk-checkbox' });
+      cb.checked = selectMode.selected.has(b.id);
+      if (cb.checked) c.classList.add('card-selected');
+      cb.addEventListener('click', (e) => e.stopPropagation());
+      cb.addEventListener('change', () => {
+        if (cb.checked) selectMode.selected.add(b.id);
+        else selectMode.selected.delete(b.id);
+        c.classList.toggle('card-selected', cb.checked);
+        updateBulkUI && updateBulkUI();
+      });
+      c.appendChild(cb);
+    }
     c.appendChild(el('div', { class: 'card-title' }, b.title || '(無題)'));
     const sub = [];
     if (b.circleName) sub.push(b.circleName);
@@ -121,9 +216,10 @@ const Library = (() => {
   }
 
   async function openFormById(id) {
-    const [book, fields, chars1, chars2] = await Promise.all([
+    const [book, allFields, chars1, chars2] = await Promise.all([
       DB.books.get(id), DB.customFields.all(), DB.characters1.all(), DB.characters2.all()
     ]);
+    const fields = filterFieldsByScope(allFields, 'books');
     openForm(book, fields, chars1, chars2);
   }
 

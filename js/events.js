@@ -62,8 +62,92 @@ const Events = (() => {
     const sub = [ev.date, ev.venue].filter(Boolean).join(' / ');
     if (sub) wrap.appendChild(el('div', { class: 'card-sub', style: 'margin-bottom:12px' }, sub));
 
+    // 未購入リストとの紐付けボタン
+    const wishItems = (await DB.wishlist.all()).filter((w) =>
+      w.spaceCode && (
+        (ev.name && (w.eventName || '').includes(ev.name.slice(0, 4))) ||
+        (ev.date && w.eventDate === ev.date) ||
+        true  // フィルタなしで全件対象（後でユーザがマッチングを確認）
+      )
+    );
+    const wishCount = wishItems.length;
+    if (wishCount > 0) {
+      const wishBar = el('div', { class: 'wishlist-link-bar' });
+      wishBar.appendChild(el('span', {}, `🎯 未購入リストに ${wishCount} 件の候補があります`));
+      wishBar.appendChild(el('button', {
+        class: 'btn btn-sm btn-primary',
+        onclick: async () => { await linkWishlistToEvent(ev); App.route(); }
+      }, 'スペース番号で紐付け'));
+      wrap.appendChild(wishBar);
+    }
+
+    // このイベントに既に紐付け済みの未購入本一覧
+    const linkedWishes = (await DB.wishlist.byEvent(ev.id));
+    if (linkedWishes.length) {
+      const linkedBox = el('details', { class: 'wishlist-linked' });
+      linkedBox.innerHTML = `<summary>📌 このイベントの未購入本（${linkedWishes.length}件）</summary>`;
+      const lwBody = el('div', { style: 'margin-top:8px' });
+      linkedWishes.forEach((w) => {
+        const c = el('div', { class: 'card', style: 'padding:10px;margin-bottom:6px' });
+        c.appendChild(el('div', { class: 'card-title', style: 'font-size:14px' }, w.title || '(タイトル未定)'));
+        const meta = [];
+        if (w.spaceCode) meta.push(`📍${w.spaceCode}`);
+        if (w.couplingLeft && w.couplingRight) meta.push(`♡${w.couplingLeft}×${w.couplingRight}`);
+        if (typeof w.price === 'number') meta.push(`¥${w.price.toLocaleString()}`);
+        c.appendChild(el('div', { class: 'card-sub' }, meta.join(' / ')));
+        lwBody.appendChild(c);
+      });
+      linkedBox.appendChild(lwBody);
+      wrap.appendChild(linkedBox);
+    }
+
     await FloorMap.mount(wrap, ev);
     return wrap;
+  }
+
+  // 未購入リストの spaceCode と、このイベントの spaces の label をマッチングして紐付け
+  async function linkWishlistToEvent(ev) {
+    const [wishes, spaces] = await Promise.all([
+      DB.wishlist.all(),
+      DB.spaces.byEvent(ev.id)
+    ]);
+
+    const normalize = (s) => (s || '').replace(/\s+/g, '').toLowerCase()
+      .replace(/[ａＡ]/g, 'a').replace(/[ｂＢ]/g, 'b');
+
+    let linked = 0;
+    let alreadyLinked = 0;
+    for (const w of wishes) {
+      if (!w.spaceCode) continue;
+      const wCode = normalize(w.spaceCode);
+      // スペースの label と比較
+      const matched = spaces.find((s) => {
+        const sl = normalize(s.label || '');
+        return sl && (sl === wCode || wCode.includes(sl) || sl.includes(wCode));
+      });
+      if (matched) {
+        if (w.eventId === ev.id && w.linkedSpaceId === matched.id) {
+          alreadyLinked++;
+          continue;
+        }
+        w.eventId = ev.id;
+        w.linkedSpaceId = matched.id;
+        w.updatedAt = new Date().toISOString();
+        await DB.wishlist.save(w);
+        linked++;
+      } else {
+        // スペースが未配置でも、イベント名/日が合えば eventId だけ設定
+        const evMatch = (ev.name && (w.eventName || '').includes(ev.name.slice(0, 4))) ||
+                        (ev.date && w.eventDate === ev.date);
+        if (evMatch && w.eventId !== ev.id) {
+          w.eventId = ev.id;
+          w.updatedAt = new Date().toISOString();
+          await DB.wishlist.save(w);
+          linked++;
+        }
+      }
+    }
+    UI.toast(`${linked}件を紐付けしました${alreadyLinked ? `（${alreadyLinked}件は既存）` : ''}`);
   }
 
   function openEventForm(existing) {

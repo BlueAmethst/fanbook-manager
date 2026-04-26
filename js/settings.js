@@ -9,6 +9,12 @@ const Settings = (() => {
     { value: 'textarea', label: '長文・備考' }
   ];
 
+  const SCOPE_OPTIONS = [
+    { value: 'both',     label: '🌐 共通',          shortLabel: '共通' },
+    { value: 'books',    label: '📚 同人管理のみ',  shortLabel: '同人管理' },
+    { value: 'wishlist', label: '🎯 未購入のみ',    shortLabel: '未購入' }
+  ];
+
   async function render() {
     const container = el('div');
 
@@ -67,7 +73,7 @@ const Settings = (() => {
     // ──── カスタムフィールド ────
     container.appendChild(el('h2', {}, 'カスタムフィールド'));
     container.appendChild(el('p', { class: 'muted' },
-      '同人誌管理・スペースで使える共通フィールドです。形式を選んで自由に追加できます。'));
+      '同人管理／未購入リストで使えるフィールドです。形式と適用範囲を選んで追加できます。'));
 
     const fields = await DB.customFields.all();
     const fieldList = el('div');
@@ -81,10 +87,12 @@ const Settings = (() => {
       }
       for (const f of fields) {
         const typeDef = FIELD_TYPES.find((t) => t.value === (f.type || 'select')) || FIELD_TYPES[0];
+        const scopeDef = SCOPE_OPTIONS.find((s) => s.value === (f.scope || 'both')) || SCOPE_OPTIONS[0];
         const c = el('div', { class: 'card' });
-        const titleRow = el('div', { style: 'display:flex;align-items:center;gap:4px' });
+        const titleRow = el('div', { style: 'display:flex;align-items:center;gap:4px;flex-wrap:wrap' });
         titleRow.appendChild(el('span', { class: 'card-title', style: 'margin:0' }, f.name));
         titleRow.appendChild(el('span', { class: 'field-type-badge' }, typeDef.label));
+        titleRow.appendChild(el('span', { class: 'field-scope-badge scope-' + (f.scope || 'both') }, scopeDef.label));
         c.appendChild(titleRow);
 
         if (f.type === 'select' || !f.type) {
@@ -247,7 +255,7 @@ const Settings = (() => {
 
   // フィールド追加・編集モーダル
   function editField(existing, refresh) {
-    const f = existing ? { ...existing } : { id: uid('cf_'), name: '', type: 'select', options: [] };
+    const f = existing ? { ...existing } : { id: uid('cf_'), name: '', type: 'select', scope: 'both', options: [] };
     const body = el('div');
 
     body.appendChild(el('div', { class: 'field' }, [
@@ -264,6 +272,19 @@ const Settings = (() => {
     }
     typeField.appendChild(typeSel);
     body.appendChild(typeField);
+
+    // 適用範囲（スコープ）
+    const scopeField = el('div', { class: 'field' }, [el('label', {}, '適用範囲')]);
+    const scopeSel = el('select', { name: 'scope' });
+    for (const s of SCOPE_OPTIONS) {
+      const opt = el('option', { value: s.value }, s.label);
+      if ((f.scope || 'both') === s.value) opt.selected = true;
+      scopeSel.appendChild(opt);
+    }
+    scopeField.appendChild(scopeSel);
+    scopeField.appendChild(el('div', { class: 'muted', style: 'font-size:11px;margin-top:4px' },
+      '「共通」は両方に表示されます。同人管理に登録された値は、未購入から購入済みに移動した際そのまま引き継がれます。'));
+    body.appendChild(scopeField);
 
     const optionsWrap = el('div', { id: 'options-wrap' });
     optionsWrap.appendChild(el('div', { class: 'field' }, [
@@ -285,6 +306,7 @@ const Settings = (() => {
       if (!name) { UI.toast('フィールド名を入力してください'); return; }
       f.name = name;
       f.type = body.querySelector('[name=type]').value;
+      f.scope = body.querySelector('[name=scope]').value || 'both';
       if (f.type === 'select') {
         f.options = body.querySelector('[name=options]').value
           .split('\n').map((x) => x.trim()).filter(Boolean);
@@ -302,13 +324,16 @@ const Settings = (() => {
   // ──── エクスポート ────
   async function exportAll() {
     const data = {
-      version: 2,
+      version: 3,
       exportedAt: new Date().toISOString(),
       books: await DB.books.all(),
       events: await DB.events.all(),
       spaces: await DB.getAll(DB.STORES.spaces),
       customFields: await DB.customFields.all(),
-      characters: await DB.characters.all()
+      characters: await DB.characters.all(),
+      characters1: await DB.characters1.all(),
+      characters2: await DB.characters2.all(),
+      wishlist: await DB.wishlist.all()
     };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     downloadBlob(blob, `doujin-manager-${today()}.json`);
@@ -359,11 +384,15 @@ const Settings = (() => {
     await wipe(DB.STORES.events);
     await wipe(DB.STORES.spaces);
     await wipe(DB.STORES.customFields);
+    await wipe(DB.STORES.wishlist);
     for (const b of data.books        || []) await DB.books.save(b);
     for (const e of data.events       || []) await DB.events.save(e);
     for (const s of data.spaces       || []) await DB.spaces.save(s);
     for (const c of data.customFields || []) await DB.customFields.save(c);
-    if (Array.isArray(data.characters)) await DB.characters.save(data.characters);
+    for (const w of data.wishlist     || []) await DB.wishlist.save(w);
+    if (Array.isArray(data.characters))  await DB.characters.save(data.characters);
+    if (Array.isArray(data.characters1)) await DB.characters1.save(data.characters1);
+    if (Array.isArray(data.characters2)) await DB.characters2.save(data.characters2);
   }
 
   function downloadBlob(blob, filename) {

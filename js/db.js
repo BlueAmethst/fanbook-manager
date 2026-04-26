@@ -1,13 +1,14 @@
 // ====== IndexedDB wrapper ======
 const DB_NAME = 'DoujinManagerDB';
-const DB_VERSION = 1;
+const DB_VERSION = 2;  // 2: wishlist ストア追加
 
 const STORES = {
   books: 'books',         // 同人誌
   events: 'events',       // イベント
   spaces: 'spaces',       // スペース（イベント内の buy list 項目）
   customFields: 'customFields',
-  settings: 'settings'    // key-value
+  settings: 'settings',   // key-value
+  wishlist: 'wishlist'    // 未購入リスト（内部名はwishlistのまま）
 };
 
 const DB = (() => {
@@ -36,6 +37,11 @@ const DB = (() => {
         }
         if (!db.objectStoreNames.contains(STORES.settings)) {
           db.createObjectStore(STORES.settings, { keyPath: 'key' });
+        }
+        if (!db.objectStoreNames.contains(STORES.wishlist)) {
+          const s = db.createObjectStore(STORES.wishlist, { keyPath: 'id' });
+          s.createIndex('spaceCode', 'spaceCode');
+          s.createIndex('eventId', 'eventId');
         }
       };
       req.onsuccess = () => { _db = req.result; resolve(_db); };
@@ -112,6 +118,14 @@ const DB = (() => {
       save: (cf) => put(STORES.customFields, cf),
       remove: (id) => del(STORES.customFields, id)
     },
+    wishlist: {
+      all: () => getAll(STORES.wishlist),
+      get: (id) => get(STORES.wishlist, id),
+      save: (w) => put(STORES.wishlist, w),
+      remove: (id) => del(STORES.wishlist, id),
+      bySpaceCode: (code) => getByIndex(STORES.wishlist, 'spaceCode', code),
+      byEvent: (eid) => getByIndex(STORES.wishlist, 'eventId', eid)
+    },
     settings: {
       get: (k) => get(STORES.settings, k).then((v) => v ? v.value : undefined),
       set: (k, v) => put(STORES.settings, { key: k, value: v })
@@ -134,6 +148,16 @@ const DB = (() => {
 // ===== ID utility =====
 function uid(prefix = '') {
   return prefix + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+}
+
+// ===== カスタムフィールド スコープフィルタ =====
+// page: 'books' | 'wishlist' を渡すと、そのページに表示すべきフィールドだけ返す
+function filterFieldsByScope(fields, page) {
+  return (fields || []).filter((f) => {
+    const scope = f.scope || 'both';
+    if (scope === 'both') return true;
+    return scope === page;
+  });
 }
 
 // ===== Constants shared across app =====
