@@ -242,28 +242,32 @@ const Library = (() => {
     `;
     const inner = el('div', { class: 'ocr-paste-inner' });
     inner.appendChild(el('div', { class: 'ocr-help' },
-      '【使い方】下の入力欄をタップ → キーボード右下の📷ボタン（iOS 16以降）で奥付を直接スキャンできます。または iPhoneの写真アプリでLive Textを使ってコピーし、ここに貼り付けてください。'));
+      '【楽な手順】iPhoneの写真アプリで画像を開く → 共有ボタン（□に↑） → 「テキストをコピー」→ 下の「📋 クリップボードから貼り付けて解析」を1タップ！'));
     const ocrTextarea = el('textarea', {
       class: 'ocr-paste-textarea',
-      placeholder: '奥付の文字をここに貼り付け、または📷ボタンでスキャン\n例：\nタイトル：〇〇〇\nサークル：△△△\n作家：××',
+      placeholder: '奥付の文字を貼り付けまたはクリップボードから自動取込',
       rows: '5'
     });
     inner.appendChild(ocrTextarea);
-    const parseBtn = el('button', { type: 'button', class: 'btn btn-primary btn-block', style: 'margin-top:6px' },
-      '解析して各欄に自動入力');
-    inner.appendChild(parseBtn);
+
+    const ocrBtnRow = el('div', { class: 'row', style: 'margin-top:6px' });
+    const pasteBtn = el('button', { type: 'button', class: 'btn btn-accent btn-block' }, '📋 クリップボードから貼り付けて解析');
+    const parseBtn = el('button', { type: 'button', class: 'btn btn-primary btn-block' }, '解析');
+    ocrBtnRow.appendChild(pasteBtn);
+    ocrBtnRow.appendChild(parseBtn);
+    inner.appendChild(ocrBtnRow);
+
     const parseStatus = el('div', { class: 'muted', style: 'font-size:12px;margin-top:6px' });
     inner.appendChild(parseStatus);
     ocrPanel.appendChild(inner);
     body.appendChild(ocrPanel);
 
-    parseBtn.addEventListener('click', () => {
-      const text = ocrTextarea.value || '';
-      if (!text.trim()) { UI.toast('テキストを入力してください'); return; }
+    function runParseColophon(text) {
+      if (!text || !text.trim()) { UI.toast('テキストを入力してください'); return; }
       const parsed = OCR.parseColophon(text);
-      const fields = ['title', 'circleName', 'authorName', 'twitter'];
+      const targets = ['title', 'circleName', 'authorName', 'twitter'];
       const filled = [];
-      for (const k of fields) {
+      for (const k of targets) {
         const inp = body.querySelector(`[name=${k}]`);
         if (inp && parsed[k] && !inp.value) { inp.value = parsed[k]; filled.push(k); }
       }
@@ -276,6 +280,22 @@ const Library = (() => {
         UI.toast(`${filled.length}項目を自動入力`);
       } else {
         parseStatus.textContent = '⚠️ 「タイトル：」「サークル：」「作家：」のような形式が見つかりませんでした。手入力してください。';
+      }
+    }
+
+    parseBtn.addEventListener('click', () => runParseColophon(ocrTextarea.value || ''));
+
+    pasteBtn.addEventListener('click', async () => {
+      try {
+        const text = await navigator.clipboard.readText();
+        if (!text || !text.trim()) {
+          UI.toast('クリップボードが空です。先に写真アプリで「テキストをコピー」してください');
+          return;
+        }
+        ocrTextarea.value = text;
+        runParseColophon(text);
+      } catch (err) {
+        UI.toast('クリップボードを読み取れませんでした。textarea に手動で貼り付けてください');
       }
     });
 

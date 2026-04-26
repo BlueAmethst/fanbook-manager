@@ -5,19 +5,23 @@ const Wishlist = (() => {
   // ── 一覧画面 ──
   async function render() {
     const container = el('div');
-    const [items, allFields, chars1, chars2, events] = await Promise.all([
+    const [items, allFields, chars1, chars2, events, eventNames, bookSizes, ratings] = await Promise.all([
       DB.wishlist.all(), DB.customFields.all(),
-      DB.characters1.all(), DB.characters2.all(), DB.events.all()
+      DB.characters1.all(), DB.characters2.all(), DB.events.all(),
+      DB.appLists.get('eventNames', DEFAULT_EVENT_NAMES),
+      DB.appLists.get('bookSizes',  DEFAULT_BOOK_SIZES),
+      DB.appLists.get('ratings',    DEFAULT_RATINGS)
     ]);
     const fields = filterFieldsByScope(allFields, 'wishlist');
+    const appLists = { eventNames, bookSizes, ratings };
 
     const head = el('div', { class: 'section-head' }, [
       el('h2', {}, `未購入：${items.length}冊`),
       el('div', { class: 'row', style: 'flex:0 0 auto;gap:6px' }, [
         el('button', { type: 'button', class: 'btn btn-sm btn-primary',
-          onclick: () => openForm(null, fields, chars1, chars2, events) }, '＋追加'),
+          onclick: () => openForm(null, fields, chars1, chars2, events, appLists) }, '＋追加'),
         el('button', { type: 'button', class: 'btn btn-sm btn-ghost',
-          onclick: () => openImportPanel(fields, chars1, chars2, events) }, '📋 X取込')
+          onclick: () => openImportPanel(fields, chars1, chars2, events, appLists) }, '📋 X取込')
       ])
     ]);
     container.appendChild(head);
@@ -119,7 +123,7 @@ const Wishlist = (() => {
         return;
       }
       list.appendChild(el('div', { class: 'muted', style: 'font-size:12px;margin-bottom:6px' }, `${filtered.length}件`));
-      filtered.forEach((b) => list.appendChild(card(b, fields, chars1, chars2, events, selectMode, updateBulkUI)));
+      filtered.forEach((b) => list.appendChild(card(b, fields, chars1, chars2, events, appLists, selectMode, updateBulkUI)));
     }
 
     input.addEventListener('input', renderList);
@@ -132,7 +136,7 @@ const Wishlist = (() => {
     return '';
   }
 
-  function card(b, fields, chars1, chars2, events, selectMode, updateBulkUI) {
+  function card(b, fields, chars1, chars2, events, appLists, selectMode, updateBulkUI) {
     const c = el('div', { class: 'card wish-card' + (selectMode.on ? ' card-selectable' : '') });
 
     // 選択モード時はチェックボックス
@@ -172,11 +176,10 @@ const Wishlist = (() => {
     const cp = couplingDisplay(b);
     if (cp)            meta.appendChild(el('span', { class: 'chip chip-coupling' }, `♡ ${cp}`));
     if (b.eventName)   meta.appendChild(el('span', { class: 'chip' }, b.eventName));
-    if (b.eventDate)   meta.appendChild(el('span', { class: 'chip' }, b.eventDate));
     if (typeof b.price === 'number' && !isNaN(b.price))
       meta.appendChild(el('span', { class: 'chip' }, `¥${b.price.toLocaleString()}`));
     if (b.rating)      meta.appendChild(el('span', { class: 'chip' }, b.rating));
-    if (b.format)      meta.appendChild(el('span', { class: 'chip' }, b.format));
+    if (b.size || b.format) meta.appendChild(el('span', { class: 'chip' }, b.size || b.format));
     if (b.twitter)     meta.appendChild(el('span', { class: 'chip' }, `𝕏 ${b.twitter}`));
     main.appendChild(meta);
 
@@ -196,7 +199,7 @@ const Wishlist = (() => {
           }
         } }, '✕ 購入不可'));
       btnRow.appendChild(el('button', { type: 'button', class: 'btn btn-sm btn-ghost',
-        onclick: (e) => { e.stopPropagation(); openForm(b, fields, chars1, chars2, events); } }, '✎ 編集'));
+        onclick: (e) => { e.stopPropagation(); openForm(b, fields, chars1, chars2, events, appLists); } }, '✎ 編集'));
       main.appendChild(btnRow);
     }
 
@@ -216,11 +219,15 @@ const Wishlist = (() => {
       couplingRight: item.couplingRight || '',
       price: item.price != null ? Number(item.price) : null,
       quantity: 1,
-      purchaseDate: item.eventDate || new Date().toISOString().slice(0, 10),
+      purchaseDate: new Date().toISOString().slice(0, 10),
       purchaseLocation: 'イベント当日',
-      notes: [item.eventNotes, item.notes,
-              item.eventName ? `@${item.eventName} ${item.spaceCode || ''}`.trim() : ''
-             ].filter(Boolean).join('\n'),
+      notes: [
+        item.eventName ? `@${item.eventName} ${item.spaceCode || ''}`.trim() : '',
+        item.rating ? `[${item.rating}]` : '',
+        item.size ? `(${item.size})` : '',
+        item.eventNotes,
+        item.notes
+      ].filter(Boolean).join('\n'),
       customFields: item.customFields ? { ...item.customFields } : {},
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -232,39 +239,52 @@ const Wishlist = (() => {
   }
 
   // ── 編集／追加フォーム ──
-  function openForm(existing, fields, chars1, chars2, events) {
+  function openForm(existing, fields, chars1, chars2, events, appLists) {
+    appLists = appLists || { eventNames: [], bookSizes: DEFAULT_BOOK_SIZES, ratings: DEFAULT_RATINGS };
     const b = existing ? { ...existing } : {
       id: uid('wish_'),
       title: '', circleName: '', authorName: '',
       twitter: '', couplingLeft: '', couplingRight: '',
-      price: '', spaceCode: '', eventName: '', eventDate: '',
-      rating: '', format: '',
+      price: '', spaceCode: '', eventName: '',
+      rating: '', size: '',
       eventNotes: '', notes: '',
       customFields: {}
     };
+    // 互換：旧 format → size 抽出
+    if (!b.size && b.format) {
+      b.size = String(b.format).split('/')[0].trim();
+    }
 
     const body = el('div');
 
     // X投稿テキスト貼り付けパネル
-    const xPanel = el('details', { class: 'ocr-paste-panel' });
+    const xPanel = el('details', { class: 'ocr-paste-panel', open: existing ? null : '' });
     xPanel.innerHTML = `<summary>📋 X(旧Twitter)投稿テキストから自動入力</summary>`;
     const xInner = el('div', { class: 'ocr-paste-inner' });
     xInner.appendChild(el('div', { class: 'ocr-help' },
-      '【使い方】Xの頒布告知ポストを「マークアップで個人情報を黒塗り→Live Textでコピー」したものを貼り付け。スペース番号・タイトル・価格・カップリングなどを自動抽出します。'));
+      '【楽な手順】iPhoneの写真アプリで画像を開く → 共有ボタン → 「テキストをコピー」→ 下の「📋 クリップボードから貼り付けて解析」を1タップ！'));
     const xTextarea = el('textarea', { class: 'ocr-paste-textarea',
-      placeholder: 'Xの投稿テキストを貼り付け\n例：\n名前 @5/6西2ヤ18b\n5/6 SUPER COMIC CITY33 day2\n『新刊タイトル』\n全年齢/A5/28p\nイベント頒布価格500円', rows: '6' });
+      placeholder: 'Xの投稿テキストを貼り付けまたはクリップボードから自動取込', rows: '5' });
     xInner.appendChild(xTextarea);
-    const xParseBtn = el('button', { type: 'button', class: 'btn btn-primary btn-block', style: 'margin-top:6px' }, '解析して自動入力');
-    xInner.appendChild(xParseBtn);
+
+    const btnRow = el('div', { class: 'row', style: 'margin-top:6px' });
+    const xPasteBtn = el('button', { type: 'button', class: 'btn btn-accent btn-block' }, '📋 クリップボードから貼り付けて解析');
+    const xParseBtn = el('button', { type: 'button', class: 'btn btn-primary btn-block' }, '解析');
+    btnRow.appendChild(xPasteBtn);
+    btnRow.appendChild(xParseBtn);
+    xInner.appendChild(btnRow);
+
     const xStatus = el('div', { class: 'muted', style: 'font-size:12px;margin-top:6px' });
     xInner.appendChild(xStatus);
     xPanel.appendChild(xInner);
     body.appendChild(xPanel);
 
-    xParseBtn.addEventListener('click', () => {
-      const text = xTextarea.value;
-      if (!text.trim()) { UI.toast('テキストを入力してください'); return; }
-      const parsed = OCR.parseXPost(text, { characters1: chars1, characters2: chars2 });
+    function runParse(text) {
+      if (!text || !text.trim()) { UI.toast('テキストを入力してください'); return; }
+      const parsed = OCR.parseXPost(text, {
+        characters1: chars1, characters2: chars2,
+        eventNames: appLists.eventNames, bookSizes: appLists.bookSizes, ratings: appLists.ratings
+      });
       const filled = [];
       const setIfEmpty = (name, val) => {
         if (!val) return;
@@ -275,17 +295,31 @@ const Wishlist = (() => {
       setIfEmpty('spaceCode', parsed.spaceCode);
       setIfEmpty('price', parsed.price);
       setIfEmpty('eventName', parsed.eventName);
-      setIfEmpty('eventDate', parsed.eventDate);
       setIfEmpty('rating', parsed.rating);
-      setIfEmpty('format', parsed.format);
+      setIfEmpty('size', parsed.size);
       setIfEmpty('couplingLeft', parsed.couplingLeft);
       setIfEmpty('couplingRight', parsed.couplingRight);
-      // ノベルティ情報は eventNotes へ
       if (parsed.eventNotes) {
         const en = body.querySelector('[name=eventNotes]');
         if (en && !en.value) { en.value = parsed.eventNotes; filled.push('eventNotes'); }
       }
       xStatus.textContent = filled.length ? `✅ ${filled.length}項目を自動入力しました（残りは手入力してください）` : '⚠️ 自動入力できる項目が見つかりませんでした';
+    }
+
+    xParseBtn.addEventListener('click', () => runParse(xTextarea.value));
+
+    xPasteBtn.addEventListener('click', async () => {
+      try {
+        const text = await navigator.clipboard.readText();
+        if (!text || !text.trim()) {
+          UI.toast('クリップボードが空です。先に写真アプリで「テキストをコピー」してください');
+          return;
+        }
+        xTextarea.value = text;
+        runParse(text);
+      } catch (err) {
+        UI.toast('クリップボードを読み取れませんでした。textarea に手動で貼り付けてください');
+      }
     });
 
     body.appendChild(formField('書名', 'title', b.title));
@@ -297,15 +331,13 @@ const Wishlist = (() => {
 
     body.appendChild(formField('スペース番号', 'spaceCode', b.spaceCode, 'text', '例：西2ヤ18b'));
 
-    const evRow = el('div', { class: 'row' });
-    evRow.appendChild(formField('イベント名', 'eventName', b.eventName, 'text', 'スパコミ等'));
-    evRow.appendChild(formField('イベント日', 'eventDate', b.eventDate, 'date'));
-    body.appendChild(evRow);
+    body.appendChild(selectField('イベント名', 'eventName', b.eventName, appLists.eventNames,
+      '※ 選択肢は「設定」→「アプリ設定」で追加できます'));
 
     const detailRow = el('div', { class: 'row' });
     detailRow.appendChild(formField('価格', 'price', b.price, 'number'));
-    detailRow.appendChild(formField('レーティング', 'rating', b.rating, 'text', '全年齢/R-18等'));
-    detailRow.appendChild(formField('サイズ/頁', 'format', b.format, 'text', 'A5/28p'));
+    detailRow.appendChild(selectField('レーティング', 'rating', b.rating, appLists.ratings));
+    detailRow.appendChild(selectField('サイズ', 'size', b.size, appLists.bookSizes));
     body.appendChild(detailRow);
 
     body.appendChild(el('div', { class: 'field' }, [
@@ -339,7 +371,11 @@ const Wishlist = (() => {
       data.id = b.id;
       data.couplingLeft = body.querySelector('[name=couplingLeft]').value || '';
       data.couplingRight = body.querySelector('[name=couplingRight]').value || '';
-      data.customFields = {};
+      // 既存のイベント紐付けを維持
+      if (b.eventId) data.eventId = b.eventId;
+      if (b.linkedSpaceId) data.linkedSpaceId = b.linkedSpaceId;
+      // 互換：既存の customFields や旧 format も全カスタムフィールド分マージ
+      data.customFields = b.customFields ? { ...b.customFields } : {};
       for (const f of fields || []) {
         const node = body.querySelector(`[data-cf="${f.id}"]`);
         if (node) data.customFields[f.id] = node.value || '';
@@ -356,15 +392,22 @@ const Wishlist = (() => {
   }
 
   // ── X取込パネル（複数まとめて投入） ──
-  function openImportPanel(fields, chars1, chars2, events) {
+  function openImportPanel(fields, chars1, chars2, events, appLists) {
+    appLists = appLists || { eventNames: [], bookSizes: DEFAULT_BOOK_SIZES, ratings: DEFAULT_RATINGS };
     const body = el('div');
     body.appendChild(el('div', { class: 'ocr-help' },
       '複数のXポストを「---」（ハイフン3つ）で区切って貼り付けてください。それぞれ自動解析→候補リストとして表示します。'));
     const ta = el('textarea', { class: 'ocr-paste-textarea', rows: '12',
       placeholder: '投稿1\n\n---\n\n投稿2\n\n---\n\n投稿3' });
     body.appendChild(ta);
-    const parseBtn = el('button', { type: 'button', class: 'btn btn-primary btn-block', style: 'margin-top:6px' }, '解析');
-    body.appendChild(parseBtn);
+
+    const btnRow = el('div', { class: 'row', style: 'margin-top:6px' });
+    const pasteBtn = el('button', { type: 'button', class: 'btn btn-accent btn-block' }, '📋 クリップボードから貼り付け');
+    const parseBtn = el('button', { type: 'button', class: 'btn btn-primary btn-block' }, '解析');
+    btnRow.appendChild(pasteBtn);
+    btnRow.appendChild(parseBtn);
+    body.appendChild(btnRow);
+
     const result = el('div', { style: 'margin-top:10px;max-height:50vh;overflow:auto' });
     body.appendChild(result);
 
@@ -374,11 +417,28 @@ const Wishlist = (() => {
     saveBtn.style.display = 'none';
     foot.appendChild(saveBtn);
 
+    pasteBtn.addEventListener('click', async () => {
+      try {
+        const text = await navigator.clipboard.readText();
+        if (!text || !text.trim()) {
+          UI.toast('クリップボードが空です');
+          return;
+        }
+        ta.value = text;
+        UI.toast('貼り付け完了。「解析」を押してください');
+      } catch (err) {
+        UI.toast('クリップボードを読み取れませんでした');
+      }
+    });
+
     parseBtn.addEventListener('click', () => {
       result.innerHTML = '';
       const blocks = ta.value.split(/\n\s*---+\s*\n/).map((b) => b.trim()).filter(Boolean);
       if (!blocks.length) { UI.toast('テキストを入力してください'); return; }
-      const candidates = blocks.map((blk) => OCR.parseXPost(blk, { characters1: chars1, characters2: chars2 }));
+      const candidates = blocks.map((blk) => OCR.parseXPost(blk, {
+        characters1: chars1, characters2: chars2,
+        eventNames: appLists.eventNames, bookSizes: appLists.bookSizes, ratings: appLists.ratings
+      }));
       candidates.forEach((c, i) => {
         const card = el('div', { class: 'card', style: 'padding:10px' });
         const cb = el('input', { type: 'checkbox', checked: 'checked' });
@@ -391,7 +451,7 @@ const Wishlist = (() => {
               c.spaceCode ? `📍${c.spaceCode}` : '',
               c.couplingLeft && c.couplingRight ? `♡${c.couplingLeft}×${c.couplingRight}` : '',
               c.price ? `¥${Number(c.price).toLocaleString()}` : '',
-              c.eventName, c.eventDate
+              c.eventName, c.size, c.rating
             ].filter(Boolean).join(' / '))
           ])
         ]));
@@ -420,9 +480,8 @@ const Wishlist = (() => {
           price: d.price ? Number(d.price) : null,
           spaceCode: d.spaceCode || '',
           eventName: d.eventName || '',
-          eventDate: d.eventDate || '',
           rating: d.rating || '',
-          format: d.format || '',
+          size: d.size || '',
           eventNotes: d.eventNotes || '',
           notes: c.__rawText || '',
           customFields: {},
@@ -445,6 +504,25 @@ const Wishlist = (() => {
       el('label', {}, label),
       el('input', { type, name, value: value == null ? '' : String(value), placeholder })
     ]);
+  }
+
+  function selectField(label, name, value, options, hint) {
+    const sel = el('select', { name });
+    sel.appendChild(el('option', { value: '' }, '（未選択）'));
+    let matched = false;
+    for (const o of options || []) {
+      const opt = el('option', { value: o }, o);
+      if (value === o) { opt.selected = true; matched = true; }
+      sel.appendChild(opt);
+    }
+    if (value && !matched) {
+      const opt = el('option', { value }, value + '（リスト外）');
+      opt.selected = true;
+      sel.appendChild(opt);
+    }
+    const wrap = el('div', { class: 'field' }, [el('label', {}, label), sel]);
+    if (hint) wrap.appendChild(el('div', { class: 'muted', style: 'font-size:11px;margin-top:4px' }, hint));
+    return wrap;
   }
 
   function couplingField(b, chars1, chars2) {

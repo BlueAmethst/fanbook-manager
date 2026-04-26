@@ -70,6 +70,52 @@ const Settings = (() => {
 
     container.appendChild(el('div', { class: 'hr' }));
 
+    // ──── アプリ設定（リストのカスタマイズ） ────
+    container.appendChild(el('h2', {}, 'アプリ設定（選択肢のカスタマイズ）'));
+    container.appendChild(el('p', { class: 'muted' },
+      '同人管理・未購入リストの「イベント名」「サイズ」「レーティング」の選択肢を自由に変更できます。1行に1つずつ書いてください。'));
+
+    const [eventNames, bookSizes, ratings] = await Promise.all([
+      DB.appLists.get('eventNames', DEFAULT_EVENT_NAMES),
+      DB.appLists.get('bookSizes',  DEFAULT_BOOK_SIZES),
+      DB.appLists.get('ratings',    DEFAULT_RATINGS)
+    ]);
+
+    function appListBox(label, list, key, defaultValue, hint) {
+      const box = el('div', { class: 'applist-box' });
+      box.appendChild(el('div', { class: 'applist-label' }, label));
+      if (hint) box.appendChild(el('div', { class: 'muted', style: 'font-size:11px;margin-bottom:4px' }, hint));
+      const ta = el('textarea', { style: 'min-height:90px' }, (list || []).join('\n'));
+      box.appendChild(el('div', { class: 'field' }, [ta]));
+      const btnRow = el('div', { style: 'display:flex;gap:6px' });
+      btnRow.appendChild(el('button', {
+        type: 'button', class: 'btn btn-primary btn-sm', style: 'flex:1',
+        onclick: async () => {
+          const lines = ta.value.split('\n').map((s) => s.trim()).filter(Boolean);
+          const seen = new Set();
+          const unique = [];
+          for (const v of lines) { if (!seen.has(v)) { seen.add(v); unique.push(v); } }
+          await DB.appLists.set(key, unique);
+          UI.toast(`${label}を保存しました（${unique.length}件）`);
+        }
+      }, '保存'));
+      btnRow.appendChild(el('button', {
+        type: 'button', class: 'btn btn-ghost btn-sm',
+        onclick: () => { ta.value = (defaultValue || []).join('\n'); }
+      }, '初期値'));
+      box.appendChild(btnRow);
+      return box;
+    }
+
+    const appRow = el('div', { class: 'applist-row' });
+    appRow.appendChild(appListBox('イベント名', eventNames, 'eventNames', DEFAULT_EVENT_NAMES,
+      '例：スパコミ／コミケ／コミティアなど'));
+    appRow.appendChild(appListBox('書籍サイズ', bookSizes, 'bookSizes', DEFAULT_BOOK_SIZES));
+    appRow.appendChild(appListBox('レーティング', ratings, 'ratings', DEFAULT_RATINGS));
+    container.appendChild(appRow);
+
+    container.appendChild(el('div', { class: 'hr' }));
+
     // ──── カスタムフィールド ────
     container.appendChild(el('h2', {}, 'カスタムフィールド'));
     container.appendChild(el('p', { class: 'muted' },

@@ -89,35 +89,28 @@ const OCR = (() => {
       if (m) result.price = m[1].replace(/,/g, '');
     }
 
-    // ── 日付：5/6 や 5月6日 ──
-    {
-      let m = text.match(/(\d{1,2})[\/／](\d{1,2})/);
-      if (m) {
-        const now = new Date();
-        const month = Number(m[1]); const day = Number(m[2]);
-        if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
-          // 過去の日付なら来年扱い
-          let year = now.getFullYear();
-          const candidate = new Date(year, month - 1, day);
-          if (candidate < now && (now - candidate) > 30 * 86400000) year++;
-          result.eventDate = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-        }
-      }
-    }
-
     // ── イベント名 ──
+    // 優先：ユーザー登録のイベント名リストから探す
     {
-      const eventPatterns = [
-        /(SUPER COMIC CITY[^\s\n]*)/i,
-        /(スパコミ[^\s\n]*)/,
-        /(コミックマーケット\s*\d+)/, /(コミケ\s*\d+)/, /(C\d{2,3})/,
-        /(コミティア\s*\d+)/, /(COMITIA\s*\d+)/i,
-        /(エアコミケ[^\s\n]*)/, /(コミックライブ[^\s\n]*)/,
-        /(関西コミティア[^\s\n]*)/, /(コミックシティ[^\s\n]*)/
-      ];
-      for (const re of eventPatterns) {
-        const m = text.match(re);
-        if (m) { result.eventName = m[1].trim(); break; }
+      const userEventNames = options.eventNames || [];
+      for (const ename of userEventNames) {
+        if (!ename) continue;
+        if (text.includes(ename)) { result.eventName = ename; break; }
+      }
+      // フォールバック：定番イベントのパターン
+      if (!result.eventName) {
+        const eventPatterns = [
+          /(SUPER COMIC CITY[^\s\n]*)/i,
+          /(スパコミ[^\s\n]*)/,
+          /(コミックマーケット\s*\d+)/, /(コミケ\s*\d+)/, /(C\d{2,3})/,
+          /(コミティア\s*\d+)/, /(COMITIA\s*\d+)/i,
+          /(エアコミケ[^\s\n]*)/, /(コミックライブ[^\s\n]*)/,
+          /(関西コミティア[^\s\n]*)/, /(コミックシティ[^\s\n]*)/
+        ];
+        for (const re of eventPatterns) {
+          const m = text.match(re);
+          if (m) { result.eventName = m[1].trim(); break; }
+        }
       }
     }
 
@@ -159,12 +152,44 @@ const OCR = (() => {
       }
     }
 
-    // ── レーティング・サイズ・ページ数 ──
+    // ── レーティング ──
+    // ユーザー登録のレーティング選択肢から探す → なければ汎用パターン → 元の値を維持
     {
-      const m = text.match(/(全年齢|R-?18|R18|R-?15|成人向け|一般向け)/i);
-      if (m) result.rating = m[1];
-      const m2 = text.match(/([AB][3-6])\s*[\/／]?\s*(\d+)\s*p/i);
-      if (m2) result.format = `${m2[1].toUpperCase()}/${m2[2]}p`;
+      const userRatings = options.ratings || [];
+      // 文字列が長い順に検査（'R-18Nあり' を 'R-18' より先に）
+      const sortedRatings = [...userRatings].sort((a, b) => b.length - a.length);
+      for (const rname of sortedRatings) {
+        if (!rname) continue;
+        if (text.includes(rname)) { result.rating = rname; break; }
+      }
+      // フォールバック（成人向け→R-18 などに正規化）
+      if (!result.rating) {
+        if (/成人向け|成年向け/.test(text)) {
+          result.rating = sortedRatings.find((r) => /R-?18/i.test(r)) || 'R-18';
+        } else if (/全年齢|一般向け/.test(text)) {
+          result.rating = sortedRatings.find((r) => r === '全年齢') || '全年齢';
+        }
+      }
+    }
+
+    // ── サイズ（ページ数は除外） ──
+    {
+      const userSizes = options.bookSizes || [];
+      // 例：「A5」「B5」など。ページ数は無視
+      let m = text.match(/([AaBb][3-6])(?!\d)/);
+      if (m) {
+        const sz = m[1].toUpperCase();
+        // ユーザー登録リストに同じサイズがあればそれを使う、無くても抽出値を返す
+        const matched = userSizes.find((s) => s.toUpperCase() === sz);
+        result.size = matched || sz;
+      } else {
+        // 「文庫」など全角サイズ
+        for (const s of userSizes) {
+          if (s && /[ぁ-龥]/.test(s) && text.includes(s)) {
+            result.size = s; break;
+          }
+        }
+      }
     }
 
     // ── ノベルティ／特典情報 → eventNotes ──

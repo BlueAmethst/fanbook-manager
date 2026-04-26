@@ -134,6 +134,14 @@ const DB = (() => {
       all: async () => (await get(STORES.settings, 'characters'))?.value || [],
       save: async (list) => put(STORES.settings, { key: 'characters', value: list })
     },
+    appLists: {
+      // page-level lists used as select options across the app
+      // (event names / book sizes / ratings, etc.)
+      get: async (key, fallback = []) =>
+        (await get(STORES.settings, 'appList_' + key))?.value || fallback,
+      set: async (key, list) =>
+        put(STORES.settings, { key: 'appList_' + key, value: list })
+    },
     characters1: {
       all: async () => (await get(STORES.settings, 'characters1'))?.value || [],
       save: async (list) => put(STORES.settings, { key: 'characters1', value: list })
@@ -169,6 +177,11 @@ const PURCHASE_LOCATIONS = [
   'イベント当日',
   'その他'
 ];
+
+// アプリ設定リストのデフォルト値
+const DEFAULT_BOOK_SIZES = ['A5', 'B5', 'A4', '文庫', 'その他'];
+const DEFAULT_RATINGS = ['全年齢', 'R-18', 'R-18Nあり', 'R-18Nなし', 'R-15'];
+const DEFAULT_EVENT_NAMES = [];
 
 const SPACE_STATUSES = [
   { key: 'none',      label: '未設定',    color: 'transparent' },
