@@ -686,6 +686,11 @@ a { color: var(--primary); text-decoration: none; }
 }
 .floormap img { display: block; max-width: none; }
 .floormap .grid-layer { position: absolute; top: 0; left: 0; pointer-events: none; }
+.floormap .grid-layer.freeform-edit {
+  pointer-events: auto;
+  cursor: crosshair;
+  background: rgba(107,168,168,0.06);
+}
 
 .space-btn {
   position: absolute;
@@ -743,6 +748,29 @@ a { color: var(--primary); text-decoration: none; }
 .field-scope-badge.scope-wishlist {
   background: rgba(216,160,160,0.15); color: var(--danger);
   border-color: rgba(192,120,120,0.30);
+}
+
+/* ========== フォルダカラーピッカー ========== */
+.folder-color-row {
+  display: flex; flex-wrap: wrap; gap: 8px;
+  margin-top: 6px;
+}
+.folder-color-swatch {
+  width: 32px; height: 32px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  padding: 0;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.15);
+  transition: transform 0.1s;
+}
+.folder-color-swatch:hover { transform: scale(1.05); }
+.folder-color-swatch.selected {
+  border-color: var(--text);
+  box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--primary);
+}
+.chip-folder {
+  font-weight: 600;
 }
 
 /* ========== Misc ========== */
