@@ -1,4 +1,4 @@
-const CACHE_NAME = 'doujin-manager-v14';
+const CACHE_NAME = 'doujin-manager-v15';
 const CORE_ASSETS = [
   './',
   './index.html',
@@ -13,6 +13,7 @@ const CORE_ASSETS = [
   './js/wishlist.js',
   './js/events.js',
   './js/floormap.js',
+  './js/exporter.js',
   './js/gmail.js',
   './js/stats.js',
   './js/settings.js'
