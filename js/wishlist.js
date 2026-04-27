@@ -5,23 +5,25 @@ const Wishlist = (() => {
   // ── 一覧画面 ──
   async function render() {
     const container = el('div');
-    const [items, allFields, chars1, chars2, events, eventNames, bookSizes, ratings] = await Promise.all([
+    const [items, allFields, chars1, chars2, events, eventNames, bookSizes, ratings, folders] = await Promise.all([
       DB.wishlist.all(), DB.customFields.all(),
       DB.characters1.all(), DB.characters2.all(), DB.events.all(),
       DB.appLists.get('eventNames', DEFAULT_EVENT_NAMES),
       DB.appLists.get('bookSizes',  DEFAULT_BOOK_SIZES),
-      DB.appLists.get('ratings',    DEFAULT_RATINGS)
+      DB.appLists.get('ratings',    DEFAULT_RATINGS),
+      DB.folders.all()
     ]);
     const fields = filterFieldsByScope(allFields, 'wishlist');
     const appLists = { eventNames, bookSizes, ratings };
+    const folderMap = Object.fromEntries(folders.map((f) => [f.id, f]));
 
     const head = el('div', { class: 'section-head' }, [
       el('h2', {}, `未購入：${items.length}冊`),
       el('div', { class: 'row', style: 'flex:0 0 auto;gap:6px' }, [
         el('button', { type: 'button', class: 'btn btn-sm btn-primary',
-          onclick: () => openForm(null, fields, chars1, chars2, events, appLists) }, '＋追加'),
+          onclick: () => openForm(null, fields, chars1, chars2, events, appLists, folders) }, '＋追加'),
         el('button', { type: 'button', class: 'btn btn-sm btn-ghost',
-          onclick: () => openImportPanel(fields, chars1, chars2, events, appLists) }, '📋 X取込')
+          onclick: () => openImportPanel(fields, chars1, chars2, events, appLists, folders) }, '🖼️ 画像取込')
       ])
     ]);
     container.appendChild(head);
@@ -30,6 +32,22 @@ const Wishlist = (() => {
     const input = el('input', { type: 'search', placeholder: '書名・サークル・スペース・カップリング・備考' });
     searchWrap.appendChild(input);
     container.appendChild(searchWrap);
+
+    // ── フィルタ・ソート ──
+    const filterRow = el('div', { class: 'filter-row' });
+    const folderSel = el('select', { 'aria-label': 'フォルダで絞り込み' });
+    folderSel.appendChild(el('option', { value: '' }, 'フォルダ：すべて'));
+    folderSel.appendChild(el('option', { value: '__none__' }, 'フォルダなし'));
+    for (const f of folders) folderSel.appendChild(el('option', { value: f.id }, f.name));
+    const sortSel = el('select', { 'aria-label': '並び替え' });
+    [
+      ['priority', '優先度順'],
+      ['date_desc', '登録が新しい順'],
+      ['date_asc',  '登録が古い順']
+    ].forEach(([v, l]) => sortSel.appendChild(el('option', { value: v }, l)));
+    filterRow.appendChild(folderSel);
+    filterRow.appendChild(sortSel);
+    container.appendChild(filterRow);
 
     // ── 一括選択モード ──
     const bulkBar = el('div', { class: 'bulk-bar' });
@@ -69,7 +87,7 @@ const Wishlist = (() => {
       const ids = [...selectMode.selected];
       const targets = items.filter((it) => ids.includes(it.id));
       await Bulk.openBulkEditModal({
-        targets, fields, chars1, chars2, mode: 'wishlist',
+        targets, fields, chars1, chars2, mode: 'wishlist', folders,
         onSave: async (patch) => {
           for (const t of targets) Bulk.applyPatch(t, patch);
           for (const t of targets) await DB.wishlist.save(t);
@@ -106,27 +124,42 @@ const Wishlist = (() => {
     function renderList() {
       list.innerHTML = '';
       const q = input.value.trim().toLowerCase();
+      const fld = folderSel.value;
       const filtered = items.filter((b) => {
+        if (fld === '__none__' && b.folderId) return false;
+        if (fld && fld !== '__none__' && b.folderId !== fld) return false;
         if (!q) return true;
         const cp = couplingDisplay(b);
         const haystack = [b.title, b.circleName, b.authorName, b.twitter,
           cp, b.notes, b.eventNotes, b.spaceCode, b.eventName].filter(Boolean).join(' ').toLowerCase();
         return haystack.includes(q);
       });
-      filtered.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+      const sort = sortSel.value;
+      filtered.sort((a, b) => {
+        if (sort === 'priority') {
+          const pa = a.priority ? Number(a.priority) : 99;
+          const pb = b.priority ? Number(b.priority) : 99;
+          if (pa !== pb) return pa - pb;
+          return (b.createdAt || '').localeCompare(a.createdAt || '');
+        }
+        if (sort === 'date_asc') return (a.createdAt || '').localeCompare(b.createdAt || '');
+        return (b.createdAt || '').localeCompare(a.createdAt || '');
+      });
 
       if (!filtered.length) {
         list.appendChild(el('div', { class: 'empty' }, [
           el('h2', {}, items.length ? '該当なし' : 'まだ登録されていません'),
-          el('p', { class: 'muted' }, '右上の「＋追加」または「📋 X取込」から追加できます')
+          el('p', { class: 'muted' }, '右上の「＋追加」または「🖼️ 画像取込」から追加できます')
         ]));
         return;
       }
       list.appendChild(el('div', { class: 'muted', style: 'font-size:12px;margin-bottom:6px' }, `${filtered.length}件`));
-      filtered.forEach((b) => list.appendChild(card(b, fields, chars1, chars2, events, appLists, selectMode, updateBulkUI)));
+      filtered.forEach((b) => list.appendChild(card(b, fields, chars1, chars2, events, appLists, selectMode, updateBulkUI, folders, folderMap)));
     }
 
     input.addEventListener('input', renderList);
+    folderSel.addEventListener('change', renderList);
+    sortSel.addEventListener('change', renderList);
     renderList();
     return container;
   }
@@ -136,8 +169,23 @@ const Wishlist = (() => {
     return '';
   }
 
-  function card(b, fields, chars1, chars2, events, appLists, selectMode, updateBulkUI) {
-    const c = el('div', { class: 'card wish-card' + (selectMode.on ? ' card-selectable' : '') });
+  // 優先度ドット
+  const PRIORITY_COLORS = { '1': '#B85555', '2': '#C07830', '3': '#A89020' };
+  function priorityDot(priority) {
+    const color = PRIORITY_COLORS[String(priority || '')];
+    if (!color) return null;
+    return el('span', {
+      class: 'priority-dot',
+      title: priority === 1 || priority === '1' ? '最優先' : priority === 2 || priority === '2' ? '欲しい' : 'できたら欲しい',
+      style: `width:10px;height:10px;border-radius:50%;background:${color};display:inline-block;flex-shrink:0;margin-right:6px;vertical-align:middle`
+    });
+  }
+
+  function card(b, fields, chars1, chars2, events, appLists, selectMode, updateBulkUI, folders, folderMap) {
+    const c = el('div', {
+      class: 'card wish-card' + (selectMode.on ? ' card-selectable' : ''),
+      style: selectMode.on ? '' : 'cursor:pointer'
+    });
 
     // 選択モード時はチェックボックス
     if (selectMode.on) {
@@ -152,7 +200,6 @@ const Wishlist = (() => {
         updateBulkUI();
       });
       c.appendChild(cb);
-      // カード全体タップでも選択切替
       c.addEventListener('click', () => {
         const cur = !selectMode.selected.has(b.id);
         if (cur) selectMode.selected.add(b.id);
@@ -161,10 +208,19 @@ const Wishlist = (() => {
         c.classList.toggle('card-selected', cur);
         updateBulkUI();
       });
+    } else {
+      // 通常モード：タップで編集フォームを開く
+      c.addEventListener('click', () => openForm(b, fields, chars1, chars2, events, appLists, folders));
     }
 
     const main = el('div', { style: 'flex:1' });
-    main.appendChild(el('div', { class: 'card-title' }, b.title || '(タイトル未定)'));
+
+    // タイトル行（優先度ドット付き）
+    const titleRow = el('div', { style: 'display:flex;align-items:center' });
+    const dot = priorityDot(b.priority);
+    if (dot) titleRow.appendChild(dot);
+    titleRow.appendChild(el('span', { class: 'card-title', style: 'margin:0' }, b.title || '(タイトル未定)'));
+    main.appendChild(titleRow);
 
     const sub = [];
     if (b.circleName) sub.push(b.circleName);
@@ -172,6 +228,13 @@ const Wishlist = (() => {
     main.appendChild(el('div', { class: 'card-sub' }, sub.join(' / ') || ''));
 
     const meta = el('div', { class: 'chips' });
+    const folder = folderMap && b.folderId ? folderMap[b.folderId] : null;
+    if (folder) {
+      meta.appendChild(el('span', {
+        class: 'chip chip-folder',
+        style: `background:${folder.color || '#888888'};color:#fff;border-color:${folder.color || '#888888'}`
+      }, `📁 ${folder.name}`));
+    }
     if (b.spaceCode)   meta.appendChild(el('span', { class: 'chip chip-space' }, `📍 ${b.spaceCode}`));
     const cp = couplingDisplay(b);
     if (cp)            meta.appendChild(el('span', { class: 'chip chip-coupling' }, `♡ ${cp}`));
@@ -184,24 +247,6 @@ const Wishlist = (() => {
     main.appendChild(meta);
 
     if (b.eventNotes) main.appendChild(el('div', { class: 'card-body muted' }, b.eventNotes));
-
-    // 購入済み・購入不可・編集ボタン
-    if (!selectMode.on) {
-      const btnRow = el('div', { class: 'wish-btn-row' });
-      btnRow.appendChild(el('button', { type: 'button', class: 'btn btn-sm', style: 'background:var(--success);color:#fff;border-color:var(--success)',
-        onclick: async (e) => { e.stopPropagation(); await markPurchased(b); App.route(); } }, '✅ 購入済み'));
-      btnRow.appendChild(el('button', { type: 'button', class: 'btn btn-sm btn-danger',
-        onclick: async (e) => {
-          e.stopPropagation();
-          if (await UI.confirm('この本を未購入リストから削除しますか？\n（購入不可だった本など）')) {
-            await DB.wishlist.remove(b.id);
-            UI.toast('削除しました'); App.route();
-          }
-        } }, '✕ 購入不可'));
-      btnRow.appendChild(el('button', { type: 'button', class: 'btn btn-sm btn-ghost',
-        onclick: (e) => { e.stopPropagation(); openForm(b, fields, chars1, chars2, events, appLists); } }, '✎ 編集'));
-      main.appendChild(btnRow);
-    }
 
     c.appendChild(main);
     return c;
@@ -229,6 +274,7 @@ const Wishlist = (() => {
         item.notes
       ].filter(Boolean).join('\n'),
       customFields: item.customFields ? { ...item.customFields } : {},
+      folderId: item.folderId || null,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       fromWishlistId: item.id
@@ -239,8 +285,9 @@ const Wishlist = (() => {
   }
 
   // ── 編集／追加フォーム ──
-  async function openForm(existing, fields, chars1, chars2, events, appLists) {
+  async function openForm(existing, fields, chars1, chars2, events, appLists, folders) {
     appLists = appLists || { eventNames: [], bookSizes: DEFAULT_BOOK_SIZES, ratings: DEFAULT_RATINGS };
+    folders = folders || (await DB.folders.all());
     const fcs = await DB.defaultFieldConfig.getMultiple(
       CONFIGURABLE_DEFAULT_FIELDS.filter((d) => d.page === 'both' || d.page === 'wishlist').map((d) => d.key)
     );
@@ -249,7 +296,7 @@ const Wishlist = (() => {
       title: '', circleName: '', authorName: '',
       twitter: '', couplingLeft: '', couplingRight: '',
       price: '', spaceCode: '', eventName: '',
-      rating: '', size: '',
+      rating: '', size: '', priority: null,
       eventNotes: '', notes: '',
       customFields: {}
     };
@@ -351,6 +398,36 @@ const Wishlist = (() => {
     body.appendChild(renderDefaultField('eventNotes', 'イベント限定情報・ノベルティ', 'eventNotes',
       b.eventNotes, fcs));
 
+    // ── 優先度 ──
+    const pSel = el('select', { name: 'priority' });
+    [
+      { value: '',  label: '（未設定）' },
+      { value: '1', label: '● 最優先', color: '#B85555' },
+      { value: '2', label: '● 欲しい', color: '#C07830' },
+      { value: '3', label: '● できたら欲しい', color: '#A89020' }
+    ].forEach(({ value, label, color }) => {
+      const opt = el('option', { value }, label);
+      if (color) opt.style.color = color;
+      if (String(b.priority || '') === value) opt.selected = true;
+      pSel.appendChild(opt);
+    });
+    body.appendChild(el('div', { class: 'field' }, [el('label', {}, '優先度'), pSel]));
+
+    // ── フォルダ ──
+    const folderSel = el('select', { name: 'folderId' });
+    folderSel.appendChild(el('option', { value: '' }, '（なし）'));
+    for (const f of folders || []) {
+      const opt = el('option', { value: f.id }, f.name);
+      if (b.folderId === f.id) opt.selected = true;
+      folderSel.appendChild(opt);
+    }
+    const folderWrap = el('div', { class: 'field' }, [el('label', {}, 'フォルダ'), folderSel]);
+    if (!folders || !folders.length) {
+      folderWrap.appendChild(el('div', { class: 'muted', style: 'font-size:11px;margin-top:4px' },
+        '※ フォルダは「設定」→「フォルダ管理」から追加できます'));
+    }
+    body.appendChild(folderWrap);
+
     // カスタムフィールド（同人管理と共通）
     for (const f of fields || []) {
       body.appendChild(renderCustomField(f, b.customFields ? b.customFields[f.id] : ''));
@@ -358,7 +435,7 @@ const Wishlist = (() => {
 
     body.appendChild(renderDefaultField('notes', '備考', 'notes', b.notes, fcs));
 
-    const foot = el('div', { style: 'display:flex;gap:10px;flex:1' });
+    const foot = el('div', { style: 'display:flex;gap:6px;flex:1;flex-wrap:wrap' });
     if (existing) {
       foot.appendChild(el('button', { type: 'button', class: 'btn btn-danger btn-sm', onclick: async () => {
         if (await UI.confirm('この本を未購入リストから削除しますか？')) {
@@ -366,6 +443,23 @@ const Wishlist = (() => {
           UI.closeModal(); UI.toast('削除しました'); App.route();
         }
       } }, '削除'));
+      foot.appendChild(el('button', {
+        type: 'button', class: 'btn btn-sm',
+        style: 'background:var(--success);color:#fff;border-color:var(--success)',
+        onclick: async () => {
+          await markPurchased(b);
+          UI.closeModal(); App.route();
+        }
+      }, '✅ 購入済み'));
+      foot.appendChild(el('button', {
+        type: 'button', class: 'btn btn-sm btn-danger',
+        onclick: async () => {
+          if (await UI.confirm('この本を未購入リストから削除しますか？\n（購入不可だった本など）')) {
+            await DB.wishlist.remove(b.id);
+            UI.closeModal(); UI.toast('削除しました'); App.route();
+          }
+        }
+      }, '✕ 購入不可'));
     }
     foot.appendChild(el('div', { style: 'flex:1' }));
     foot.appendChild(el('button', { type: 'button', class: 'btn btn-ghost', onclick: UI.closeModal }, 'キャンセル'));
@@ -385,6 +479,8 @@ const Wishlist = (() => {
       }
       if (data.price === '' || data.price === null) data.price = null;
       else data.price = Number(data.price);
+      data.priority = data.priority ? Number(data.priority) : null;
+      data.folderId = data.folderId || null;
       data.updatedAt = new Date().toISOString();
       data.createdAt = existing ? (b.createdAt || data.updatedAt) : data.updatedAt;
       await DB.wishlist.save(data);
@@ -400,14 +496,24 @@ const Wishlist = (() => {
   }
 
   // ── X取込パネル（複数まとめて投入） ──
-  function openImportPanel(fields, chars1, chars2, events, appLists) {
+  function openImportPanel(fields, chars1, chars2, events, appLists, folders) {
     appLists = appLists || { eventNames: [], bookSizes: DEFAULT_BOOK_SIZES, ratings: DEFAULT_RATINGS };
+    folders = folders || [];
     const body = el('div');
     body.appendChild(el('div', { class: 'ocr-help' },
       '複数のXポストを「---」「...」「…」のいずれかで区切って貼り付けてください。それぞれ自動解析→候補リストとして表示します。'));
     const ta = el('textarea', { class: 'ocr-paste-textarea', rows: '12',
       placeholder: '投稿1\n\n...\n\n投稿2\n\n...\n\n投稿3' });
     body.appendChild(ta);
+
+    // 一括登録時にデフォルトで割り当てるフォルダ
+    const importFolderSel = el('select', { name: 'importFolderId' });
+    importFolderSel.appendChild(el('option', { value: '' }, '（フォルダなし）'));
+    for (const f of folders || []) {
+      importFolderSel.appendChild(el('option', { value: f.id }, f.name));
+    }
+    body.appendChild(el('div', { class: 'field', style: 'margin-top:6px' },
+      [el('label', {}, '登録先フォルダ（取込時に一括適用）'), importFolderSel]));
 
     const btnRow = el('div', { class: 'row', style: 'margin-top:6px' });
     const pasteBtn = el('button', { type: 'button', class: 'btn btn-accent btn-block' }, '📋 クリップボードから貼り付け');
@@ -503,6 +609,8 @@ const Wishlist = (() => {
           eventNotes: d.eventNotes || '',
           notes: c.__rawText || '',
           customFields: {},
+          folderId: importFolderSel.value || null,
+          priority: null,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString()
         });
@@ -513,7 +621,7 @@ const Wishlist = (() => {
       App.route();
     });
 
-    UI.openModal({ title: 'X投稿から一括取込', body, footer: foot });
+    UI.openModal({ title: '画像テキストから一括取込', body, footer: foot });
 
     // モーダル開いた直後にクリップボード自動取込を試行
     setTimeout(() => { tryImportPaste(false); }, 100);

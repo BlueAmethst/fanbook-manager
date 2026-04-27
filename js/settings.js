@@ -119,6 +119,83 @@ const Settings = (() => {
 
     container.appendChild(el('div', { class: 'hr' }));
 
+    // ──── フォルダ管理 ────
+    container.appendChild(el('h2', {}, 'フォルダ管理'));
+    container.appendChild(el('p', { class: 'muted' },
+      '同人誌・未購入リストをフォルダで分類できます。各フォルダに名前と色を設定し、本一覧でフィルタできます。'));
+
+    const folders = await DB.folders.all();
+    const folderListBox = el('div');
+    container.appendChild(folderListBox);
+
+    function renderFolderList() {
+      folderListBox.innerHTML = '';
+      if (!folders.length) {
+        folderListBox.appendChild(el('div', { class: 'muted', style: 'padding:10px 0' },
+          'まだフォルダがありません'));
+        return;
+      }
+      for (const f of folders) {
+        const card = el('div', { class: 'card' });
+        const titleRow = el('div', { style: 'display:flex;align-items:center;gap:8px;flex-wrap:wrap' });
+        titleRow.appendChild(el('span', {
+          style: `width:14px;height:14px;border-radius:50%;background:${f.color || '#888888'};display:inline-block;flex-shrink:0`
+        }));
+        titleRow.appendChild(el('span', { class: 'card-title', style: 'margin:0' }, f.name));
+        card.appendChild(titleRow);
+
+        const btnRow = el('div', { style: 'display:flex;gap:8px;margin-top:10px' });
+        btnRow.appendChild(el('button', {
+          type: 'button', class: 'btn btn-sm',
+          onclick: () => editFolder(f, refreshFolders)
+        }, '編集'));
+        btnRow.appendChild(el('button', {
+          type: 'button', class: 'btn btn-sm btn-danger',
+          onclick: async () => {
+            if (!(await UI.confirm(`「${f.name}」を削除しますか？\n（このフォルダに含まれる本は「フォルダなし」になります）`))) return;
+            // 蔵書・未購入リストから folderId を解除
+            const [books, wishes] = await Promise.all([DB.books.all(), DB.wishlist.all()]);
+            for (const b of books) {
+              if (b.folderId === f.id) {
+                b.folderId = null;
+                await DB.books.save(b);
+              }
+            }
+            for (const w of wishes) {
+              if (w.folderId === f.id) {
+                w.folderId = null;
+                await DB.wishlist.save(w);
+              }
+            }
+            await DB.folders.remove(f.id);
+            const idx = folders.findIndex((x) => x.id === f.id);
+            if (idx !== -1) folders.splice(idx, 1);
+            renderFolderList();
+            UI.toast('削除しました');
+          }
+        }, '削除'));
+        card.appendChild(btnRow);
+        folderListBox.appendChild(card);
+      }
+    }
+
+    async function refreshFolders() {
+      const fresh = await DB.folders.all();
+      folders.length = 0;
+      folders.push(...fresh);
+      renderFolderList();
+    }
+    renderFolderList();
+
+    container.appendChild(el('button', {
+      type: 'button',
+      class: 'btn btn-primary btn-block',
+      style: 'margin-top:10px',
+      onclick: () => editFolder(null, refreshFolders)
+    }, '＋フォルダを追加'));
+
+    container.appendChild(el('div', { class: 'hr' }));
+
     // ──── デフォルト項目の入力形式 ────
     container.appendChild(el('h2', {}, 'デフォルト項目の入力形式'));
     container.appendChild(el('p', { class: 'muted' },
@@ -398,6 +475,55 @@ const Settings = (() => {
     return container;
   }
 
+  // フォルダ追加・編集モーダル
+  function editFolder(existing, refresh) {
+    const f = existing
+      ? { ...existing }
+      : { id: uid('fld_'), name: '', color: FOLDER_COLORS[0].value, createdAt: new Date().toISOString() };
+    const body = el('div');
+
+    body.appendChild(el('div', { class: 'field' }, [
+      el('label', {}, 'フォルダ名'),
+      el('input', { type: 'text', name: 'name', value: f.name, placeholder: '例：未読／お気に入り／○○シリーズ' })
+    ]));
+
+    // カラーピッカー（チップ風）
+    const colorField = el('div', { class: 'field' }, [el('label', {}, '色')]);
+    const colorRow = el('div', { class: 'folder-color-row' });
+    const colorInput = el('input', { type: 'hidden', name: 'color', value: f.color });
+    for (const c of FOLDER_COLORS) {
+      const swatch = el('button', {
+        type: 'button',
+        class: 'folder-color-swatch' + (f.color === c.value ? ' selected' : ''),
+        title: c.label,
+        style: `background:${c.value}`,
+        onclick: () => {
+          colorInput.value = c.value;
+          colorRow.querySelectorAll('.folder-color-swatch').forEach((b) => b.classList.remove('selected'));
+          swatch.classList.add('selected');
+        }
+      });
+      colorRow.appendChild(swatch);
+    }
+    colorField.appendChild(colorRow);
+    colorField.appendChild(colorInput);
+    body.appendChild(colorField);
+
+    const foot = el('div', { style: 'display:flex;gap:10px;flex:1;justify-content:flex-end' });
+    foot.appendChild(el('button', { type: 'button', class: 'btn btn-ghost', onclick: UI.closeModal }, 'キャンセル'));
+    foot.appendChild(el('button', { type: 'button', class: 'btn btn-primary', onclick: async () => {
+      const name = body.querySelector('[name=name]').value.trim();
+      if (!name) { UI.toast('フォルダ名を入力してください'); return; }
+      f.name = name;
+      f.color = colorInput.value || FOLDER_COLORS[0].value;
+      await DB.folders.save(f);
+      UI.closeModal(); UI.toast('保存しました');
+      refresh && refresh();
+    } }, '保存'));
+
+    UI.openModal({ title: existing ? 'フォルダを編集' : 'フォルダを追加', body, footer: foot });
+  }
+
   // フィールド追加・編集モーダル
   function editField(existing, refresh) {
     const f = existing ? { ...existing } : { id: uid('cf_'), name: '', type: 'select', scope: 'both', options: [] };
@@ -469,7 +595,7 @@ const Settings = (() => {
   // ──── エクスポート ────
   async function exportAll() {
     const data = {
-      version: 3,
+      version: 4,
       exportedAt: new Date().toISOString(),
       books: await DB.books.all(),
       events: await DB.events.all(),
@@ -478,7 +604,8 @@ const Settings = (() => {
       characters: await DB.characters.all(),
       characters1: await DB.characters1.all(),
       characters2: await DB.characters2.all(),
-      wishlist: await DB.wishlist.all()
+      wishlist: await DB.wishlist.all(),
+      folders: await DB.folders.all()
     };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     downloadBlob(blob, `doujin-manager-${today()}.json`);
@@ -530,11 +657,13 @@ const Settings = (() => {
     await wipe(DB.STORES.spaces);
     await wipe(DB.STORES.customFields);
     await wipe(DB.STORES.wishlist);
+    await wipe(DB.STORES.folders);
     for (const b of data.books        || []) await DB.books.save(b);
     for (const e of data.events       || []) await DB.events.save(e);
     for (const s of data.spaces       || []) await DB.spaces.save(s);
     for (const c of data.customFields || []) await DB.customFields.save(c);
     for (const w of data.wishlist     || []) await DB.wishlist.save(w);
+    for (const f of data.folders      || []) await DB.folders.save(f);
     if (Array.isArray(data.characters))  await DB.characters.save(data.characters);
     if (Array.isArray(data.characters1)) await DB.characters1.save(data.characters1);
     if (Array.isArray(data.characters2)) await DB.characters2.save(data.characters2);

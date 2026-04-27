@@ -1,6 +1,6 @@
 // ====== IndexedDB wrapper ======
 const DB_NAME = 'DoujinManagerDB';
-const DB_VERSION = 2;  // 2: wishlist ストア追加
+const DB_VERSION = 3;  // 3: folders ストア追加
 
 const STORES = {
   books: 'books',         // 同人誌
@@ -8,7 +8,8 @@ const STORES = {
   spaces: 'spaces',       // スペース（イベント内の buy list 項目）
   customFields: 'customFields',
   settings: 'settings',   // key-value
-  wishlist: 'wishlist'    // 未購入リスト（内部名はwishlistのまま）
+  wishlist: 'wishlist',   // 未購入リスト（内部名はwishlistのまま）
+  folders: 'folders'      // フォルダ（蔵書・未購入共通）
 };
 
 const DB = (() => {
@@ -42,6 +43,9 @@ const DB = (() => {
           const s = db.createObjectStore(STORES.wishlist, { keyPath: 'id' });
           s.createIndex('spaceCode', 'spaceCode');
           s.createIndex('eventId', 'eventId');
+        }
+        if (!db.objectStoreNames.contains(STORES.folders)) {
+          db.createObjectStore(STORES.folders, { keyPath: 'id' });
         }
       };
       req.onsuccess = () => { _db = req.result; resolve(_db); };
@@ -125,6 +129,12 @@ const DB = (() => {
       remove: (id) => del(STORES.wishlist, id),
       bySpaceCode: (code) => getByIndex(STORES.wishlist, 'spaceCode', code),
       byEvent: (eid) => getByIndex(STORES.wishlist, 'eventId', eid)
+    },
+    folders: {
+      all: () => getAll(STORES.folders),
+      get: (id) => get(STORES.folders, id),
+      save: (f) => put(STORES.folders, f),
+      remove: (id) => del(STORES.folders, id)
     },
     settings: {
       get: (k) => get(STORES.settings, k).then((v) => v ? v.value : undefined),
@@ -210,6 +220,18 @@ const DEFAULT_FIELD_TYPES = [
   { value: 'text',     label: '短文テキスト' },
   { value: 'select',   label: '選択肢' },
   { value: 'textarea', label: '長文・備考' }
+];
+
+// フォルダの色パレット（くすみ系8色）
+const FOLDER_COLORS = [
+  { value: '#888888', label: 'グレー' },
+  { value: '#B85555', label: 'くすみ赤' },
+  { value: '#C07830', label: 'くすみオレンジ' },
+  { value: '#A89020', label: 'くすみイエロー' },
+  { value: '#688868', label: 'くすみグリーン' },
+  { value: '#5878A0', label: 'くすみブルー' },
+  { value: '#806890', label: 'くすみパープル' },
+  { value: '#9C7868', label: 'くすみブラウン' }
 ];
 
 const SPACE_STATUSES = [

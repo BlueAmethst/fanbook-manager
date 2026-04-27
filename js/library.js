@@ -4,16 +4,18 @@ const Library = (() => {
 
   async function render() {
     const container = el('div');
-    const [books, allFields, chars1, chars2, purchaseLocs] = await Promise.all([
+    const [books, allFields, chars1, chars2, purchaseLocs, folders] = await Promise.all([
       DB.books.all(), DB.customFields.all(), DB.characters1.all(), DB.characters2.all(),
-      DB.appLists.get('purchaseLocations', PURCHASE_LOCATIONS)
+      DB.appLists.get('purchaseLocations', PURCHASE_LOCATIONS),
+      DB.folders.all()
     ]);
     const fields = filterFieldsByScope(allFields, 'books');
+    const folderMap = Object.fromEntries(folders.map((f) => [f.id, f]));
 
     const head = el('div', { class: 'section-head' }, [
       el('h2', {}, `蔵書：${books.length}冊`),
       el('div', { class: 'row', style: 'flex:0 0 auto; gap:6px' }, [
-        el('button', { type: 'button', class: 'btn btn-sm btn-primary', onclick: () => openForm(null, fields, chars1, chars2, purchaseLocs) }, '＋追加'),
+        el('button', { type: 'button', class: 'btn btn-sm btn-primary', onclick: () => openForm(null, fields, chars1, chars2, purchaseLocs, folders) }, '＋追加'),
         el('button', { type: 'button', class: 'btn btn-sm btn-ghost', onclick: () => Gmail.openImport() }, 'Gmail取込')
       ])
     ]);
@@ -27,6 +29,10 @@ const Library = (() => {
 
     // ── フィルタ・ソート ──
     const filterRow = el('div', { class: 'filter-row' });
+    const folderSel = el('select', { 'aria-label': 'フォルダで絞り込み' });
+    folderSel.appendChild(el('option', { value: '' }, 'フォルダ：すべて'));
+    folderSel.appendChild(el('option', { value: '__none__' }, 'フォルダなし'));
+    for (const f of folders) folderSel.appendChild(el('option', { value: f.id }, f.name));
     const locSel = el('select', { 'aria-label': '購入場所で絞り込み' });
     locSel.appendChild(el('option', { value: '' }, '購入場所：すべて'));
     for (const loc of purchaseLocs) locSel.appendChild(el('option', { value: loc }, loc));
@@ -38,6 +44,7 @@ const Library = (() => {
       ['price_asc', '金額が安い順'],
       ['title_asc', '書名順']
     ].forEach(([v, l]) => sortSel.appendChild(el('option', { value: v }, l)));
+    filterRow.appendChild(folderSel);
     filterRow.appendChild(locSel);
     filterRow.appendChild(sortSel);
     container.appendChild(filterRow);
@@ -91,7 +98,7 @@ const Library = (() => {
       const ids = [...selectMode.selected];
       const targets = books.filter((b) => ids.includes(b.id));
       Bulk.openBulkEditModal({
-        targets, fields, chars1, chars2, mode: 'books', purchaseLocs,
+        targets, fields, chars1, chars2, mode: 'books', purchaseLocs, folders,
         onSave: async (patch) => {
           for (const t of targets) Bulk.applyPatch(t, patch);
           for (const t of targets) await DB.books.save(t);
@@ -114,10 +121,13 @@ const Library = (() => {
       list.innerHTML = '';
       const q = input.value.trim().toLowerCase();
       const loc = locSel.value;
+      const fld = folderSel.value;
       const sort = sortSel.value;
 
       let filtered = books.filter((b) => {
         if (loc && b.purchaseLocation !== loc) return false;
+        if (fld === '__none__' && b.folderId) return false;
+        if (fld && fld !== '__none__' && b.folderId !== fld) return false;
         if (!q) return true;
         const coupling = couplingDisplay(b);
         const haystack = [
@@ -147,10 +157,11 @@ const Library = (() => {
         return;
       }
       list.appendChild(el('div', { class: 'muted', style: 'font-size:12px;margin-bottom:6px' }, `${filtered.length}件`));
-      filtered.forEach((b) => list.appendChild(card(b, fields, chars1, chars2, selectMode, updateBulkUI)));
+      filtered.forEach((b) => list.appendChild(card(b, fields, chars1, chars2, selectMode, updateBulkUI, folderMap)));
     }
 
     input.addEventListener('input', renderList);
+    folderSel.addEventListener('change', renderList);
     locSel.addEventListener('change', renderList);
     sortSel.addEventListener('change', renderList);
     renderList();
@@ -162,7 +173,7 @@ const Library = (() => {
     return b.coupling || '';
   }
 
-  function card(b, fields, chars1, chars2, selectMode, updateBulkUI) {
+  function card(b, fields, chars1, chars2, selectMode, updateBulkUI, folderMap) {
     const c = el('div', {
       class: 'card' + (selectMode && selectMode.on ? ' card-selectable' : ''),
       onclick: () => {
@@ -198,6 +209,13 @@ const Library = (() => {
     c.appendChild(el('div', { class: 'card-sub' }, sub.join(' / ') || ''));
 
     const meta = el('div', { class: 'chips' });
+    const folder = folderMap && b.folderId ? folderMap[b.folderId] : null;
+    if (folder) {
+      meta.appendChild(el('span', {
+        class: 'chip chip-folder',
+        style: `background:${folder.color || '#888888'};color:#fff;border-color:${folder.color || '#888888'}`
+      }, `📁 ${folder.name}`));
+    }
     const cp = couplingDisplay(b);
     if (cp) meta.appendChild(el('span', { class: 'chip chip-coupling' }, `♡ ${cp}`));
     if (b.twitter) meta.appendChild(el('span', { class: 'chip' }, `𝕏 ${b.twitter}`));
@@ -217,16 +235,18 @@ const Library = (() => {
   }
 
   async function openFormById(id) {
-    const [book, allFields, chars1, chars2, purchaseLocs] = await Promise.all([
+    const [book, allFields, chars1, chars2, purchaseLocs, folders] = await Promise.all([
       DB.books.get(id), DB.customFields.all(), DB.characters1.all(), DB.characters2.all(),
-      DB.appLists.get('purchaseLocations', PURCHASE_LOCATIONS)
+      DB.appLists.get('purchaseLocations', PURCHASE_LOCATIONS),
+      DB.folders.all()
     ]);
     const fields = filterFieldsByScope(allFields, 'books');
-    openForm(book, fields, chars1, chars2, purchaseLocs);
+    openForm(book, fields, chars1, chars2, purchaseLocs, folders);
   }
 
-  async function openForm(existing, fields, chars1, chars2, purchaseLocs) {
+  async function openForm(existing, fields, chars1, chars2, purchaseLocs, folders) {
     purchaseLocs = purchaseLocs || PURCHASE_LOCATIONS;
+    folders = folders || [];
     // デフォルト項目の入力形式設定を読込
     const fcs = await DB.defaultFieldConfig.getMultiple(
       CONFIGURABLE_DEFAULT_FIELDS.filter((d) => d.page === 'both' || d.page === 'books').map((d) => d.key)
@@ -326,6 +346,7 @@ const Library = (() => {
 
     body.appendChild(formField('購入日付', 'purchaseDate', b.purchaseDate, 'date'));
     body.appendChild(selectField('購入場所', 'purchaseLocation', b.purchaseLocation, purchaseLocs));
+    body.appendChild(folderField('フォルダ', 'folderId', b.folderId, folders));
 
     // ── カスタムフィールド ──
     for (const f of fields || []) {
@@ -359,6 +380,7 @@ const Library = (() => {
       if (data.price === '' || data.price === null) data.price = null;
       else data.price = Number(data.price);
       data.quantity = Math.max(1, Number(data.quantity) || 1);
+      data.folderId = data.folderId || null;
       data.updatedAt = new Date().toISOString();
       data.createdAt = existing ? (b.createdAt || data.updatedAt) : data.updatedAt;
       await DB.books.save(data);
@@ -444,6 +466,22 @@ const Library = (() => {
       sel.appendChild(opt);
     }
     return el('div', { class: 'field' }, [el('label', {}, label), sel]);
+  }
+
+  function folderField(label, name, value, folders) {
+    const sel = el('select', { name });
+    sel.appendChild(el('option', { value: '' }, '（なし）'));
+    for (const f of folders || []) {
+      const opt = el('option', { value: f.id }, f.name);
+      if (value === f.id) opt.selected = true;
+      sel.appendChild(opt);
+    }
+    const wrap = el('div', { class: 'field' }, [el('label', {}, label), sel]);
+    if (!folders || !folders.length) {
+      wrap.appendChild(el('div', { class: 'muted', style: 'font-size:11px;margin-top:4px' },
+        '※ フォルダは「設定」→「フォルダ管理」から追加できます'));
+    }
+    return wrap;
   }
 
   function makeCharSelect(name, value, characters) {

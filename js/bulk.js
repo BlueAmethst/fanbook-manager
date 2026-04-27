@@ -4,9 +4,9 @@ const Bulk = (() => {
   const { el, esc } = UI;
 
   // 一括編集モーダルを開く
-  // options: { targets, fields, chars1, chars2, mode, purchaseLocs, onSave }
+  // options: { targets, fields, chars1, chars2, mode, purchaseLocs, folders, onSave }
   // mode: 'books' | 'wishlist'  （'books' のみ購入場所を表示）
-  function openBulkEditModal({ targets, fields, chars1, chars2, mode, purchaseLocs, onSave }) {
+  function openBulkEditModal({ targets, fields, chars1, chars2, mode, purchaseLocs, folders, onSave }) {
     const body = el('div');
     body.appendChild(el('div', { class: 'ocr-help' },
       `📝 ${targets.length}件の項目を一括設定します。チェックを入れた項目だけが上書きされます。空欄のまま「適用」を押すとその項目はクリアされます。`));
@@ -25,6 +25,21 @@ const Bulk = (() => {
     cpRow.appendChild(cpRight);
     cpSection.appendChild(cpRow);
     body.appendChild(cpSection);
+
+    // ── フォルダ一括設定 ──
+    let folderEnable, folderSel;
+    if (folders && folders.length) {
+      folderEnable = el('input', { type: 'checkbox', id: 'bulk-folder-enable' });
+      const folderSection = el('div', { class: 'bulk-section' });
+      folderSection.appendChild(el('label', { class: 'bulk-section-head' }, [
+        folderEnable, el('span', { style: 'margin-left:6px;font-weight:600' }, 'フォルダを一括設定')
+      ]));
+      folderSel = el('select', { name: 'bulkFolder', style: 'margin-top:8px' });
+      folderSel.appendChild(el('option', { value: '' }, '（フォルダなし）'));
+      for (const f of folders) folderSel.appendChild(el('option', { value: f.id }, f.name));
+      folderSection.appendChild(folderSel);
+      body.appendChild(folderSection);
+    }
 
     // ── 購入場所（同人誌管理のみ） ──
     let locEnable, locSel;
@@ -87,6 +102,9 @@ const Bulk = (() => {
       }
       if (locEnable && locEnable.checked) {
         patch.purchaseLocation = locSel.value || '';
+      }
+      if (folderEnable && folderEnable.checked) {
+        patch.folderId = folderSel.value || null;
       }
       const cfPatch = {};
       for (const { field, enable, input } of cfBoxes) {

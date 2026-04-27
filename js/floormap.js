@@ -13,12 +13,23 @@ const FloorMap = (() => {
 
   let currentMode = 'check';
 
+  const defaultSpaceSize = { w: 36, h: 26 };
+
   // ── フロア配列の取得（古いデータを自動移行） ──
   async function getOrMigrateFloors(event) {
-    if (event.floors && event.floors.length > 0) return event.floors;
+    if (event.floors && event.floors.length > 0) {
+      // 既存フロアに mode が無ければ grid を補完
+      let changed = false;
+      for (const fl of event.floors) {
+        if (!fl.mode) { fl.mode = 'grid'; changed = true; }
+      }
+      if (changed) await DB.events.save(event);
+      return event.floors;
+    }
     const floor = {
       id: uid('floor_'),
       name: 'メインフロア',
+      mode: 'grid',
       image: event.floorMapImage || null,
       gridConfig: event.gridConfig || null
     };
@@ -124,10 +135,17 @@ const FloorMap = (() => {
         onclick: () => uploadInput.click()
       }, '🗺 地図を変更'));
       controls.appendChild(uploadInput);
-      controls.appendChild(el('button', {
-        class: 'btn btn-sm',
-        onclick: () => openGridConfig(floor, event, renderMap)
-      }, 'グリッド設定'));
+      if (floor.mode === 'freeform') {
+        controls.appendChild(el('button', {
+          class: 'btn btn-sm',
+          onclick: () => openSpaceSizeConfig(floor, event, renderMap)
+        }, 'スペースサイズ'));
+      } else {
+        controls.appendChild(el('button', {
+          class: 'btn btn-sm',
+          onclick: () => openGridConfig(floor, event, renderMap)
+        }, 'グリッド設定'));
+      }
 
       // マップ
       const mapWrap = el('div', { class: 'floormap-wrap' });
@@ -155,10 +173,25 @@ const FloorMap = (() => {
 
       function renderMap() {
         mapWrap.innerHTML = '';
-        const cfg = floor.gridConfig || { ...defaultGrid };
         const inner = el('div', { class: 'floormap' });
         mapWrap.appendChild(inner);
 
+        if (floor.mode === 'freeform') {
+          if (!floor.image) {
+            inner.appendChild(el('div', {
+              style: 'padding:24px;color:var(--text-dim);font-size:14px'
+            }, '先に「🗺 地図を変更」から地図画像をアップロードしてください。'));
+            return;
+          }
+          const img = el('img', { src: floor.image, alt: '' });
+          inner.appendChild(img);
+          const place = () => placeFreeformButtons(inner, floor, event, spaces, fields, reload, img.naturalWidth, img.naturalHeight);
+          img.onload = place;
+          if (img.complete && img.naturalWidth) place();
+          return;
+        }
+
+        // ── grid モード ──
         if (floor.image) {
           const img = el('img', { src: floor.image, alt: '' });
           inner.appendChild(img);
@@ -185,14 +218,41 @@ const FloorMap = (() => {
 
   // ── フロア追加 ──
   async function addFloor(floors, event, onAdded) {
-    const name = await UI.prompt('新しいフロアの名前を入力してください\n（例：西棟・南棟・3F など）', '');
-    if (!name) return;
-    const newFloor = { id: uid('floor_'), name, image: null, gridConfig: null };
-    floors.push(newFloor);
-    event.floors = floors;
-    await DB.events.save(event);
-    UI.toast(`「${name}」を追加しました`);
-    onAdded && onAdded(newFloor);
+    const body = el('div');
+    body.appendChild(el('div', { class: 'field' }, [
+      el('label', {}, 'フロア名（例：西棟・モ列・3F など）'),
+      el('input', { type: 'text', name: 'floorName', value: '' })
+    ]));
+    const modeFld = el('div', { class: 'field' }, [el('label', {}, '配置モード')]);
+    const modeSel = el('select', { name: 'floorMode' });
+    for (const [v, l] of [
+      ['grid', '均等グリッド（行×列の規則的な配置）'],
+      ['freeform', 'フリーフォーム（地図画像の上に任意配置）']
+    ]) {
+      const opt = el('option', { value: v }, l);
+      modeSel.appendChild(opt);
+    }
+    modeFld.appendChild(modeSel);
+    body.appendChild(modeFld);
+    body.appendChild(el('p', { class: 'muted', style: 'font-size:12px;margin-top:0' },
+      'フリーフォームは地図画像必須。スパコミなど複雑なレイアウト向け。'));
+
+    const foot = el('div', { style: 'display:flex;gap:10px;flex:1;justify-content:flex-end' });
+    foot.appendChild(el('button', { class: 'btn btn-ghost', onclick: UI.closeModal }, 'キャンセル'));
+    foot.appendChild(el('button', { class: 'btn btn-primary', onclick: async () => {
+      const name = body.querySelector('[name=floorName]').value.trim();
+      if (!name) { UI.toast('フロア名を入力してください'); return; }
+      const mode = body.querySelector('[name=floorMode]').value;
+      const newFloor = { id: uid('floor_'), name, mode, image: null, gridConfig: null };
+      floors.push(newFloor);
+      event.floors = floors;
+      await DB.events.save(event);
+      UI.closeModal();
+      UI.toast(`「${name}」を追加しました`);
+      onAdded && onAdded(newFloor);
+    } }, '追加'));
+
+    UI.openModal({ title: 'フロアを追加', body, footer: foot });
   }
 
   // ── フロア設定（名前変更・削除） ──
@@ -202,6 +262,22 @@ const FloorMap = (() => {
       el('label', {}, 'フロア名'),
       el('input', { type: 'text', name: 'floorName', value: floor.name })
     ]));
+
+    // 配置モード
+    const modeFld = el('div', { class: 'field' }, [el('label', {}, '配置モード')]);
+    const modeSel = el('select', { name: 'floorMode' });
+    for (const [v, l] of [
+      ['grid', '均等グリッド'],
+      ['freeform', 'フリーフォーム（地図上に任意配置）']
+    ]) {
+      const opt = el('option', { value: v }, l);
+      if ((floor.mode || 'grid') === v) opt.selected = true;
+      modeSel.appendChild(opt);
+    }
+    modeFld.appendChild(modeSel);
+    body.appendChild(modeFld);
+    body.appendChild(el('p', { class: 'muted', style: 'font-size:12px;margin-top:0' },
+      'モードを切替えても既存スペース情報は残ります（位置情報の互換性に注意）。'));
 
     const foot = el('div', { style: 'display:flex;gap:10px;flex:1' });
     if (floors.length > 1) {
@@ -230,6 +306,7 @@ const FloorMap = (() => {
       const newName = body.querySelector('[name=floorName]').value.trim();
       if (!newName) { UI.toast('フロア名を入力してください'); return; }
       floor.name = newName;
+      floor.mode = body.querySelector('[name=floorMode]').value || 'grid';
       event.floors = floors;
       await DB.events.save(event);
       UI.closeModal();
@@ -238,6 +315,237 @@ const FloorMap = (() => {
     } }, '保存'));
 
     UI.openModal({ title: 'フロアの設定', body, footer: foot });
+  }
+
+  // ── ボタン配置（フリーフォーム） ──
+  function placeFreeformButtons(inner, floor, event, spaces, fields, reload, imgW, imgH) {
+    [...inner.querySelectorAll('.space-btn, .grid-layer')].forEach((n) => n.remove());
+    const layer = el('div', {
+      class: 'grid-layer' + (currentMode === 'edit' ? ' freeform-edit' : '')
+    });
+    layer.style.width = imgW + 'px';
+    layer.style.height = imgH + 'px';
+    inner.appendChild(layer);
+
+    const size = floor.spaceSize || defaultSpaceSize;
+
+    // 既存スペース配置
+    for (const sp of spaces) {
+      if (sp.xPct == null || sp.yPct == null) continue;
+      const x = (sp.xPct / 100) * imgW - size.w / 2;
+      const y = (sp.yPct / 100) * imgH - size.h / 2;
+      const status = sp.status || 'none';
+      const label = sp.label || '';
+      const btn = el('button', {
+        class: `space-btn status-${status}`,
+        style: `left:${x}px;top:${y}px;width:${size.w}px;height:${size.h}px`,
+        title: label
+      }, label);
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        handleFreeformClick(event, floor, sp, fields, reload);
+      });
+      layer.appendChild(btn);
+    }
+
+    // 編集モード時のみ、画像クリックで新規追加
+    if (currentMode === 'edit') {
+      layer.style.pointerEvents = 'auto';
+      layer.addEventListener('click', (e) => {
+        if (e.target !== layer) return;
+        const rect = layer.getBoundingClientRect();
+        const xPct = ((e.clientX - rect.left) / rect.width) * 100;
+        const yPct = ((e.clientY - rect.top) / rect.height) * 100;
+        openFreeformSpaceForm(event, floor, null, { xPct, yPct }, fields, reload);
+      });
+    }
+  }
+
+  // ── フリーフォーム時のボタンタップ処理 ──
+  async function handleFreeformClick(event, floor, sp, fields, reload) {
+    if (currentMode === 'check') {
+      if (['priority','want','special'].includes(sp.status)) {
+        const ok = await UI.confirmPurchase({
+          title: (sp.items && sp.items[0]) || sp.circleName || '',
+          circleName: sp.circleName,
+          authorName: sp.authorName,
+          spaceLabel: sp.label || ''
+        });
+        if (!ok) return;
+        sp.status = 'purchased';
+        sp.purchasedAt = new Date().toISOString();
+        await DB.spaces.save(sp);
+        const book = await Library.createFromSpace(sp, event);
+        sp.bookId = book.id;
+        await DB.spaces.save(sp);
+        UI.toast('購入済に変更・本棚に追加しました');
+        reload();
+      } else if (sp.status === 'purchased') {
+        if (!(await UI.confirm('購入済を取り消しますか？（本棚の登録も削除されます）'))) return;
+        if (sp.bookId) { try { await DB.books.remove(sp.bookId); } catch (_) {} }
+        sp.status = 'want'; sp.bookId = null;
+        await DB.spaces.save(sp);
+        UI.toast('「欲しい」に戻しました');
+        reload();
+      } else {
+        openFreeformSpaceForm(event, floor, sp, null, fields, reload);
+      }
+    } else if (currentMode === 'info') {
+      showFreeformInfo(event, floor, sp, fields);
+    } else {
+      openFreeformSpaceForm(event, floor, sp, null, fields, reload);
+    }
+  }
+
+  function showFreeformInfo(event, floor, sp, fields) {
+    const label = sp.label || '（無題）';
+    const body = el('div');
+    body.innerHTML = `
+      <div style="line-height:1.9;font-size:15px">
+        <div><span class="muted">ステータス：</span>${esc(statusLabel(sp.status))}</div>
+        ${sp.circleName ? `<div><span class="muted">サークル：</span>${esc(sp.circleName)}</div>` : ''}
+        ${sp.authorName ? `<div><span class="muted">作家：</span>${esc(sp.authorName)}</div>`     : ''}
+        ${sp.items && sp.items.length ? `<div><span class="muted">頒布物：</span>${esc(sp.items.join(', '))}</div>` : ''}
+        ${sp.price != null ? `<div><span class="muted">価格：</span>¥${Number(sp.price).toLocaleString()}</div>` : ''}
+        ${sp.notes ? `<div><span class="muted">備考：</span>${esc(sp.notes)}</div>`               : ''}
+        ${fields.filter((f) => sp.customFields && sp.customFields[f.id])
+            .map((f) => `<div><span class="muted">${esc(f.name)}：</span>${esc(sp.customFields[f.id])}</div>`).join('')}
+      </div>
+    `;
+    const foot = el('div', { style: 'display:flex;gap:10px;flex:1;justify-content:flex-end' });
+    foot.appendChild(el('button', { class: 'btn btn-ghost', onclick: UI.closeModal }, '閉じる'));
+    UI.openModal({ title: `スペース ${label}`, body, footer: foot });
+  }
+
+  // ── フリーフォーム用 編集フォーム ──
+  function openFreeformSpaceForm(event, floor, existing, newPos, fields, reload) {
+    const sp = existing ? { ...existing } : {
+      id: uid('space_'), eventId: event.id, floorId: floor.id,
+      xPct: newPos.xPct, yPct: newPos.yPct,
+      label: '',
+      circleName: '', authorName: '', items: [],
+      price: '', status: 'none', notes: '', customFields: {}
+    };
+
+    const body = el('div');
+    body.appendChild(fld('スペース番号（例：モ-33）', 'label', sp.label));
+    body.appendChild(fld('サークル名', 'circleName', sp.circleName));
+    body.appendChild(fld('作家名', 'authorName', sp.authorName));
+    body.appendChild(fld('頒布物（書名、カンマ区切り）', 'items', (sp.items || []).join(', ')));
+    body.appendChild(fld('価格', 'price', sp.price == null ? '' : sp.price, 'number'));
+
+    const statusField = el('div', { class: 'field' }, [el('label', {}, 'ステータス')]);
+    const statusRow = el('div', { class: 'row' });
+    for (const st of SPACE_STATUSES) {
+      const textColor = (st.key === 'none' || st.key === 'skip') ? 'var(--text)' : '#fff';
+      const btn = el('button', {
+        type: 'button', class: 'btn btn-sm', 'data-status': st.key,
+        style: st.color === 'transparent' ? ''
+          : `background:${st.color};color:${textColor};border-color:${st.color}`,
+        onclick: () => {
+          statusField.querySelectorAll('[data-status]').forEach((b) => b.style.outline = '');
+          btn.style.outline = '3px solid var(--primary)';
+          sp._selectedStatus = st.key;
+        }
+      }, st.label);
+      if (sp.status === st.key) { btn.style.outline = '3px solid var(--primary)'; sp._selectedStatus = st.key; }
+      statusRow.appendChild(btn);
+    }
+    statusField.appendChild(statusRow);
+    body.appendChild(statusField);
+
+    for (const f of fields || []) {
+      body.appendChild(customSelectField(f, sp.customFields ? sp.customFields[f.id] : ''));
+    }
+    body.appendChild(el('div', { class: 'field' }, [
+      el('label', {}, '備考'),
+      el('textarea', { name: 'notes' }, sp.notes || '')
+    ]));
+
+    const foot = el('div', { style: 'display:flex;gap:10px;flex:1' });
+    if (existing) {
+      foot.appendChild(el('button', { class: 'btn btn-sm btn-ghost', onclick: async () => {
+        UI.closeModal();
+        UI.toast('地図上の新しい位置をタップしてください');
+        await waitForFreeformReposition(floor, sp, reload);
+      } }, '位置を変更'));
+      foot.appendChild(el('button', { class: 'btn btn-danger btn-sm', onclick: async () => {
+        if (await UI.confirm('このスペース情報を削除しますか？')) {
+          await DB.spaces.remove(sp.id);
+          UI.closeModal(); UI.toast('削除しました'); reload();
+        }
+      } }, '削除'));
+    }
+    foot.appendChild(el('div', { style: 'flex:1' }));
+    foot.appendChild(el('button', { class: 'btn btn-ghost', onclick: UI.closeModal }, 'キャンセル'));
+    foot.appendChild(el('button', { class: 'btn btn-primary', onclick: async () => {
+      sp.label      = body.querySelector('[name=label]').value.trim();
+      sp.circleName = body.querySelector('[name=circleName]').value.trim();
+      sp.authorName = body.querySelector('[name=authorName]').value.trim();
+      const itemsRaw = body.querySelector('[name=items]').value.trim();
+      sp.items = itemsRaw ? itemsRaw.split(/[,、]/).map((x) => x.trim()).filter(Boolean) : [];
+      const p = body.querySelector('[name=price]').value;
+      sp.price = p === '' ? null : Number(p);
+      sp.notes = body.querySelector('[name=notes]').value;
+      sp.status = sp._selectedStatus || sp.status || 'none';
+      sp.floorId = floor.id;
+      delete sp._selectedStatus;
+      sp.customFields = {};
+      for (const f of fields || []) {
+        const n = body.querySelector(`[data-cf="${f.id}"]`);
+        if (n) sp.customFields[f.id] = n.value;
+      }
+      await DB.spaces.save(sp);
+      UI.closeModal(); UI.toast('保存しました'); reload();
+    } }, '保存'));
+
+    UI.openModal({ title: existing ? `スペース ${sp.label || ''}` : '新しいスペース', body, footer: foot });
+  }
+
+  // ── 位置変更：次にタップした位置に動かす ──
+  function waitForFreeformReposition(floor, sp, reload) {
+    return new Promise((resolve) => {
+      const layer = document.querySelector('.grid-layer.freeform-edit');
+      if (!layer) { resolve(); return; }
+      const handler = async (e) => {
+        const rect = layer.getBoundingClientRect();
+        sp.xPct = ((e.clientX - rect.left) / rect.width) * 100;
+        sp.yPct = ((e.clientY - rect.top) / rect.height) * 100;
+        await DB.spaces.save(sp);
+        UI.toast('位置を更新しました');
+        layer.removeEventListener('click', handler, true);
+        reload();
+        resolve();
+      };
+      layer.addEventListener('click', handler, true);
+    });
+  }
+
+  // ── スペースサイズ設定（フリーフォーム） ──
+  function openSpaceSizeConfig(floor, event, onSaved) {
+    const size = floor.spaceSize || { ...defaultSpaceSize };
+    const body = el('div');
+    body.innerHTML = `<p class="muted" style="margin-top:0;font-size:13px">スペースボタンの大きさ（px）を調整します。</p>`;
+    const row = el('div', { class: 'row' });
+    row.appendChild(numFld('幅(px)', 'w', size.w));
+    row.appendChild(numFld('高さ(px)', 'h', size.h));
+    body.appendChild(row);
+
+    const foot = el('div', { style: 'display:flex;gap:10px;flex:1;justify-content:flex-end' });
+    foot.appendChild(el('button', { class: 'btn btn-ghost', onclick: UI.closeModal }, 'キャンセル'));
+    foot.appendChild(el('button', { class: 'btn btn-primary', onclick: async () => {
+      floor.spaceSize = {
+        w: +body.querySelector('[name=w]').value || defaultSpaceSize.w,
+        h: +body.querySelector('[name=h]').value || defaultSpaceSize.h
+      };
+      const idx = event.floors.findIndex((f) => f.id === floor.id);
+      if (idx !== -1) event.floors[idx] = floor;
+      await DB.events.save(event);
+      UI.closeModal(); UI.toast('サイズを更新しました');
+      onSaved && onSaved();
+    } }, '保存'));
+
+    UI.openModal({ title: 'スペースサイズ', body, footer: foot });
   }
 
   // ── ボタン配置 ──

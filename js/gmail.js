@@ -148,6 +148,13 @@ const Gmail = (() => {
     }
   ];
 
+  // タイトル正規化（重複判定用）
+  function normalizeTitle(s) {
+    return String(s || '').trim().toLowerCase()
+      .replace(/[\s　]+/g, '')
+      .replace(/[「」『』【】（）()〈〉《》・]/g, '');
+  }
+
   async function openImport() {
     let token;
     try {
@@ -161,12 +168,30 @@ const Gmail = (() => {
     const body = el('div');
     body.appendChild(el('p', { class: 'muted', style: 'margin-top:0' },
       '購入確認メールを検索して、候補を表示します。取り込むものにチェックを入れて登録してください。'));
-    const rangeField = el('div', { class: 'row' });
-    rangeField.appendChild(el('div', { class: 'field' }, [
-      el('label', {}, '検索範囲（過去◯日）'),
-      el('input', { type: 'number', name: 'days', value: '180', min: '1' })
+
+    // 日付範囲（デフォルト：6ヶ月前〜今日）
+    const today = new Date().toISOString().slice(0, 10);
+    const sixMonthsAgo = new Date(Date.now() - 180 * 86400000).toISOString().slice(0, 10);
+    const rangeRow = el('div', { class: 'row' });
+    rangeRow.appendChild(el('div', { class: 'field' }, [
+      el('label', {}, '開始日'),
+      el('input', { type: 'date', name: 'fromDate', value: sixMonthsAgo })
     ]));
-    body.appendChild(rangeField);
+    rangeRow.appendChild(el('div', { class: 'field' }, [
+      el('label', {}, '終了日'),
+      el('input', { type: 'date', name: 'toDate', value: today })
+    ]));
+    body.appendChild(rangeRow);
+
+    // 重複除外オプション
+    const dedupRow = el('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:10px' });
+    const dedupCb = el('input', { type: 'checkbox', id: 'gmail-dedup' });
+    dedupCb.checked = true;
+    dedupRow.appendChild(dedupCb);
+    dedupRow.appendChild(el('label', { for: 'gmail-dedup', style: 'cursor:pointer' },
+      '既存の蔵書と同じタイトルを除外する'));
+    body.appendChild(dedupRow);
+
     const runBtn = el('button', { type: 'button', class: 'btn btn-primary btn-block' }, '検索');
     body.appendChild(runBtn);
     const resultBox = el('div', { style: 'margin-top:12px;max-height:50vh;overflow:auto' });
@@ -182,8 +207,21 @@ const Gmail = (() => {
       resultBox.innerHTML = '<div class="muted text-center" style="padding:20px">検索中...</div>';
       saveBtn.style.display = 'none';
       try {
-        const days = Number(body.querySelector('[name=days]').value) || 180;
-        const candidates = await searchAll(days);
+        const fromDate = body.querySelector('[name=fromDate]').value;
+        const toDate   = body.querySelector('[name=toDate]').value;
+        const dedup    = dedupCb.checked;
+
+        let candidates = await searchAll({ fromDate, toDate });
+
+        if (dedup && candidates.length) {
+          const books = await DB.books.all();
+          const existing = new Set(books.map((b) => normalizeTitle(b.title)));
+          const before = candidates.length;
+          candidates = candidates.filter((c) => !existing.has(normalizeTitle(c.title)));
+          const skipped = before - candidates.length;
+          if (skipped > 0) UI.toast(`重複 ${skipped}件を除外しました`);
+        }
+
         renderCandidates(resultBox, candidates);
         if (candidates.length) saveBtn.style.display = '';
       } catch (e) {
@@ -194,13 +232,24 @@ const Gmail = (() => {
     UI.openModal({ title: 'Gmailから取り込み', body, footer: foot });
   }
 
-  async function searchAll(days) {
+  async function searchAll({ fromDate, toDate }) {
     const token = await ensureToken();
-    const after = Math.floor((Date.now() - days * 86400000) / 1000);
+
+    // Gmail クエリ用日付（YYYY/MM/DD 形式）
+    const afterStr  = fromDate ? `after:${fromDate.replace(/-/g, '/')}` : '';
+    let beforeStr = '';
+    if (toDate) {
+      // before: は非包括なので翌日を指定して終了日を含める
+      const d = new Date(toDate);
+      d.setDate(d.getDate() + 1);
+      beforeStr = `before:${d.toISOString().slice(0, 10).replace(/-/g, '/')}`;
+    }
+
     const all = [];
     for (const rule of SHOP_RULES) {
-      const q = encodeURIComponent(`${rule.senderQuery} after:${after}`);
-      const list = await apiGet(`/messages?q=${q}&maxResults=30`, token);
+      const dateQ = [afterStr, beforeStr].filter(Boolean).join(' ');
+      const q = encodeURIComponent(`${rule.senderQuery} ${dateQ}`);
+      const list = await apiGet(`/messages?q=${q}&maxResults=50`, token);
       for (const m of list.messages || []) {
         try {
           const msg = await apiGet(`/messages/${m.id}?format=full`, token);
