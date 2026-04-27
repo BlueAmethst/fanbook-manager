@@ -700,8 +700,11 @@ a { color: var(--primary); text-decoration: none; }
   font-size: 10px; color: var(--text);
   display: flex; align-items: center; justify-content: center;
   font-weight: 600; pointer-events: auto; cursor: pointer;
-  padding: 0; line-height: 1;
+  padding: 0 2px; line-height: 1.05;
+  text-align: center;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+.space-btn.half { font-size: 9px; padding: 0 1px; border-radius: 3px; }
 .space-btn:active { opacity: 0.8; }
 .space-btn.status-priority  { background: var(--status-priority);  border-color: var(--status-priority);  color: #fff; }
 .space-btn.status-want      { background: var(--status-want);      border-color: var(--status-want);      color: #fff; }
