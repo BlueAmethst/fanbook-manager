@@ -54,7 +54,8 @@ const Events = (() => {
     const wrap = el('div');
     wrap.appendChild(el('div', { class: 'section-head' }, [
       el('h2', {}, ev.name),
-      el('div', { style: 'display:flex;gap:6px' }, [
+      el('div', { style: 'display:flex;gap:6px;flex-wrap:wrap' }, [
+        el('button', { class: 'btn btn-sm', onclick: () => Exporter.downloadEventCsv(ev) }, '📤 リスト出力'),
         el('button', { class: 'btn btn-sm', onclick: () => openEventForm(ev) }, '編集'),
         el('button', { class: 'btn btn-sm btn-ghost', onclick: () => App.go('events') }, '一覧')
       ])

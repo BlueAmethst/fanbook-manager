@@ -140,6 +140,40 @@ const FloorMap = (() => {
           class: 'btn btn-sm',
           onclick: () => openSpaceSizeConfig(floor, event, renderMap)
         }, 'スペースサイズ'));
+
+        // JSONインポート
+        const jsonInput = el('input', { type: 'file', accept: '.json,application/json', style: 'display:none' });
+        jsonInput.addEventListener('change', async (e) => {
+          const file = e.target.files[0];
+          if (!file) return;
+          try {
+            const text = await file.text();
+            const data = JSON.parse(text);
+            const n = await importJsonSpaces(event, floor, data);
+            UI.toast(`${n} 件のスペースを取り込みました`);
+            await reload();
+          } catch (err) {
+            UI.toast('JSON読込エラー：' + (err.message || err));
+          } finally {
+            jsonInput.value = '';
+          }
+        });
+        controls.appendChild(el('button', {
+          class: 'btn btn-sm',
+          onclick: () => jsonInput.click()
+        }, '📥 JSON取込'));
+        controls.appendChild(jsonInput);
+
+        controls.appendChild(el('button', {
+          class: 'btn btn-sm',
+          onclick: () => showJsonFormatHelp()
+        }, '❓ JSON形式'));
+
+        // スクショ
+        controls.appendChild(el('button', {
+          class: 'btn btn-sm',
+          onclick: () => exportFloorScreenshot(floor, spaces, event.name || 'event')
+        }, '📷 スクショ保存'));
       } else {
         controls.appendChild(el('button', {
           class: 'btn btn-sm',
@@ -328,24 +362,41 @@ const FloorMap = (() => {
     inner.appendChild(layer);
 
     const size = floor.spaceSize || defaultSpaceSize;
+    const groups = groupSpacesByLabel(spaces);
 
-    // 既存スペース配置
-    for (const sp of spaces) {
-      if (sp.xPct == null || sp.yPct == null) continue;
-      const x = (sp.xPct / 100) * imgW - size.w / 2;
-      const y = (sp.yPct / 100) * imgH - size.h / 2;
-      const status = sp.status || 'none';
-      const label = sp.label || '';
-      const btn = el('button', {
-        class: `space-btn status-${status}`,
-        style: `left:${x}px;top:${y}px;width:${size.w}px;height:${size.h}px`,
-        title: label
-      }, label);
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        handleFreeformClick(event, floor, sp, fields, reload);
-      });
-      layer.appendChild(btn);
+    for (const key of Object.keys(groups)) {
+      const group = groups[key];
+      const anchor = group[0];
+      if (anchor.xPct == null || anchor.yPct == null) continue;
+      const cx = (anchor.xPct / 100) * imgW;
+      const cy = (anchor.yPct / 100) * imgH;
+
+      // a/b ペアか単独かで分割
+      const sorted = group.slice().sort((p, q) => (p.subLabel || '').localeCompare(q.subLabel || ''));
+      const count = Math.min(sorted.length, 2);
+      for (let i = 0; i < count; i++) {
+        const sp = sorted[i];
+        const w = count === 2 ? Math.floor(size.w / 2) : size.w;
+        const h = size.h;
+        const x = cx - size.w / 2 + (count === 2 ? i * w : 0);
+        const y = cy - h / 2;
+        const status = sp.status || 'none';
+        const display = (sp.authorName && sp.authorName.trim())
+          ? sp.authorName : (sp.label || '') + (sp.subLabel || '');
+        const titleText = (sp.label || '') + (sp.subLabel ? sp.subLabel : '')
+          + (sp.circleName ? `\n${sp.circleName}` : '')
+          + (sp.authorName ? `\n${sp.authorName}` : '');
+        const btn = el('button', {
+          class: `space-btn status-${status}` + (count === 2 ? ' half' : ''),
+          style: `left:${x}px;top:${y}px;width:${w}px;height:${h}px`,
+          title: titleText
+        }, display);
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          handleFreeformClick(event, floor, sp, fields, reload);
+        });
+        layer.appendChild(btn);
+      }
     }
 
     // 編集モード時のみ、画像クリックで新規追加
@@ -422,13 +473,16 @@ const FloorMap = (() => {
     const sp = existing ? { ...existing } : {
       id: uid('space_'), eventId: event.id, floorId: floor.id,
       xPct: newPos.xPct, yPct: newPos.yPct,
-      label: '',
+      label: '', subLabel: '',
       circleName: '', authorName: '', items: [],
       price: '', status: 'none', notes: '', customFields: {}
     };
 
     const body = el('div');
-    body.appendChild(fld('スペース番号（例：モ-33）', 'label', sp.label));
+    const labelRow = el('div', { class: 'row' });
+    labelRow.appendChild(fld('スペース番号（例：モ-33）', 'label', sp.label));
+    labelRow.appendChild(fld('a/b（任意）', 'subLabel', sp.subLabel || ''));
+    body.appendChild(labelRow);
     body.appendChild(fld('サークル名', 'circleName', sp.circleName));
     body.appendChild(fld('作家名', 'authorName', sp.authorName));
     body.appendChild(fld('頒布物（書名、カンマ区切り）', 'items', (sp.items || []).join(', ')));
@@ -480,6 +534,7 @@ const FloorMap = (() => {
     foot.appendChild(el('button', { class: 'btn btn-ghost', onclick: UI.closeModal }, 'キャンセル'));
     foot.appendChild(el('button', { class: 'btn btn-primary', onclick: async () => {
       sp.label      = body.querySelector('[name=label]').value.trim();
+      sp.subLabel   = (body.querySelector('[name=subLabel]').value || '').trim().toLowerCase();
       sp.circleName = body.querySelector('[name=circleName]').value.trim();
       sp.authorName = body.querySelector('[name=authorName]').value.trim();
       const itemsRaw = body.querySelector('[name=items]').value.trim();
@@ -499,7 +554,87 @@ const FloorMap = (() => {
       UI.closeModal(); UI.toast('保存しました'); reload();
     } }, '保存'));
 
-    UI.openModal({ title: existing ? `スペース ${sp.label || ''}` : '新しいスペース', body, footer: foot });
+    UI.openModal({ title: existing ? `スペース ${sp.label || ''}${sp.subLabel || ''}` : '新しいスペース', body, footer: foot });
+  }
+
+  // ── スペースを floorId+label でグループ化 ──
+  function groupSpacesByLabel(spaces) {
+    const groups = {};
+    for (const sp of spaces) {
+      const key = sp.label ? `lbl:${sp.label}` : `id:${sp.id}`;
+      (groups[key] = groups[key] || []).push(sp);
+    }
+    return groups;
+  }
+
+  // ── JSONインポート ──
+  // 想定フォーマット: [{ "label":"モ-1", "sub":"a"|"b"|"", "xPct":22.1, "yPct":22.5,
+  //                     "circleName":"...", "authorName":"...", "items":["..."],
+  //                     "price":1000, "status":"want"|"priority"|... }]
+  async function importJsonSpaces(event, floor, data) {
+    if (!Array.isArray(data)) throw new Error('JSONは配列である必要があります');
+    const existing = (await DB.spaces.byEvent(event.id)).filter((s) => s.floorId === floor.id);
+    const findExisting = (label, sub) =>
+      existing.find((s) => (s.label || '') === (label || '') && (s.subLabel || '') === (sub || ''));
+
+    let count = 0;
+    for (const row of data) {
+      if (!row || typeof row !== 'object') continue;
+      const label = (row.label || '').toString().trim();
+      const sub   = (row.sub || row.subLabel || '').toString().trim().toLowerCase();
+      const xPct  = Number(row.xPct);
+      const yPct  = Number(row.yPct);
+      if (!label || !isFinite(xPct) || !isFinite(yPct)) continue;
+
+      const found = findExisting(label, sub);
+      const sp = found ? { ...found } : {
+        id: uid('space_'), eventId: event.id, floorId: floor.id,
+        status: 'none', items: [], customFields: {}
+      };
+      sp.label = label;
+      sp.subLabel = sub;
+      sp.xPct = xPct;
+      sp.yPct = yPct;
+      if (row.circleName != null) sp.circleName = String(row.circleName);
+      if (row.authorName != null) sp.authorName = String(row.authorName);
+      if (row.items != null) sp.items = Array.isArray(row.items) ? row.items.map(String) : String(row.items).split(/[,、]/).map((s) => s.trim()).filter(Boolean);
+      if (row.price != null && row.price !== '') sp.price = Number(row.price);
+      if (row.status) sp.status = row.status;
+      if (row.notes != null) sp.notes = String(row.notes);
+      await DB.spaces.save(sp);
+      count++;
+    }
+    return count;
+  }
+
+  function showJsonFormatHelp() {
+    const body = el('div');
+    body.innerHTML = `
+      <p style="margin:0 0 8px;font-size:14px">フリーフォームに取り込むJSONの形式：</p>
+      <pre style="background:var(--bg-elev);padding:10px;border-radius:8px;font-size:12px;overflow:auto;line-height:1.5">[
+  {
+    "label": "モ-1",
+    "sub": "a",
+    "xPct": 22.1,
+    "yPct": 18.5,
+    "circleName": "サークル名",
+    "authorName": "作家名",
+    "items": ["新刊タイトル"],
+    "price": 1000,
+    "status": "want"
+  }
+]</pre>
+      <ul style="font-size:13px;line-height:1.7;padding-left:18px">
+        <li><b>label</b>：スペース番号（必須、例：モ-1）</li>
+        <li><b>sub</b>：a/b（任意。同label・同位置のa/bは左右半分ずつ表示）</li>
+        <li><b>xPct/yPct</b>：画像幅・高さに対する位置 0〜100（必須）</li>
+        <li><b>status</b>：priority / want / special / purchased / skip / none</li>
+        <li>同じ label+sub があれば<b>上書き</b>、なければ追加</li>
+      </ul>
+    `;
+    const foot = el('div', { style: 'display:flex;flex:1;justify-content:flex-end' });
+    foot.appendChild(el('button', { class: 'btn btn-ghost', onclick: UI.closeModal }, '閉じる'));
+    UI.openModal({ title: 'JSONインポート形式', body, footer: foot });
   }
 
   // ── 位置変更：次にタップした位置に動かす ──
@@ -835,6 +970,69 @@ const FloorMap = (() => {
         document.createTextNode(st.label)
       ]));
     }
+  }
+
+  // ── フロアマップ スクショ保存（PNG） ──
+  async function exportFloorScreenshot(floor, spaces, eventName) {
+    if (!floor.image) { UI.toast('地図画像がありません'); return; }
+    const img = new Image();
+    img.src = floor.image;
+    await new Promise((res, rej) => { img.onload = res; img.onerror = rej; });
+    const W = img.naturalWidth, H = img.naturalHeight;
+    const canvas = document.createElement('canvas');
+    canvas.width = W; canvas.height = H;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0);
+
+    const size = floor.spaceSize || defaultSpaceSize;
+    const groups = groupSpacesByLabel(spaces);
+    const statusColors = {
+      priority: '#E67E22', want: '#3498DB', purchased: '#7FB069',
+      special: '#9B59B6', skip: '#BDC3C7', none: 'rgba(255,255,255,0.85)'
+    };
+
+    ctx.font = `bold ${Math.max(10, Math.floor(size.h * 0.5))}px sans-serif`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+
+    for (const key of Object.keys(groups)) {
+      const group = groups[key].slice().sort((p, q) => (p.subLabel || '').localeCompare(q.subLabel || ''));
+      const anchor = group[0];
+      if (anchor.xPct == null || anchor.yPct == null) continue;
+      const cx = (anchor.xPct / 100) * W;
+      const cy = (anchor.yPct / 100) * H;
+      const count = Math.min(group.length, 2);
+      for (let i = 0; i < count; i++) {
+        const sp = group[i];
+        const w = count === 2 ? Math.floor(size.w / 2) : size.w;
+        const h = size.h;
+        const x = cx - size.w / 2 + (count === 2 ? i * w : 0);
+        const y = cy - h / 2;
+        const status = sp.status || 'none';
+        const isLight = (status === 'none' || status === 'skip');
+        ctx.fillStyle = statusColors[status] || statusColors.none;
+        ctx.strokeStyle = 'rgba(0,0,0,0.4)';
+        ctx.lineWidth = 1.5;
+        ctx.fillRect(x, y, w, h);
+        ctx.strokeRect(x, y, w, h);
+        const text = (sp.authorName && sp.authorName.trim())
+          ? sp.authorName : (sp.label || '') + (sp.subLabel || '');
+        ctx.fillStyle = isLight ? '#333' : '#fff';
+        // 長すぎたら切る
+        const maxLen = count === 2 ? 4 : 6;
+        const display = text.length > maxLen ? text.slice(0, maxLen) : text;
+        ctx.fillText(display, x + w / 2, y + h / 2);
+      }
+    }
+
+    canvas.toBlob((blob) => {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const safeName = (eventName + '_' + (floor.name || 'floor')).replace(/[\\/:*?"<>|]/g, '_');
+      a.href = url; a.download = `${safeName}.png`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      UI.toast('スクショを保存しました');
+    }, 'image/png');
   }
 
   function fileToDataUrl(file) {
