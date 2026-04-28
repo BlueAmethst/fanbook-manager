@@ -13,7 +13,8 @@ const FloorMap = (() => {
 
   let currentMode = 'check';
 
-  const defaultSpaceSize = { w: 36, h: 26 };
+  const defaultSpaceSize = { w: 64, h: 34 };
+  let _freeformInner = null; // 位置変更用 参照
 
   // ── フロア配列の取得（古いデータを自動移行） ──
   async function getOrMigrateFloors(event) {
@@ -135,6 +136,21 @@ const FloorMap = (() => {
         onclick: () => uploadInput.click()
       }, '🗺 地図を変更'));
       controls.appendChild(uploadInput);
+      if (floor.image) {
+        controls.appendChild(el('button', {
+          class: 'btn btn-sm btn-ghost',
+          style: 'color:var(--status-priority)',
+          onclick: async () => {
+            if (!(await UI.confirm('地図画像を削除しますか？\nスペースの位置情報は残ります。'))) return;
+            floor.image = null;
+            const idx = event.floors.findIndex((f) => f.id === floor.id);
+            if (idx !== -1) event.floors[idx] = floor;
+            await DB.events.save(event);
+            renderMap();
+            UI.toast('地図を削除しました');
+          }
+        }, '🗑 地図を削除'));
+      }
       if (floor.mode === 'freeform') {
         controls.appendChild(el('button', {
           class: 'btn btn-sm',
@@ -351,8 +367,14 @@ const FloorMap = (() => {
     UI.openModal({ title: 'フロアの設定', body, footer: foot });
   }
 
+  // ラベルから列プレフィックスを除去（例：「モ-31」→「31」）
+  function stripLabelPrefix(label) {
+    return (label || '').replace(/^[^-]+-/, '');
+  }
+
   // ── ボタン配置（フリーフォーム） ──
   function placeFreeformButtons(inner, floor, event, spaces, fields, reload, imgW, imgH) {
+    _freeformInner = inner;
     [...inner.querySelectorAll('.space-btn, .grid-layer')].forEach((n) => n.remove());
     const layer = el('div', {
       class: 'grid-layer' + (currentMode === 'edit' ? ' freeform-edit' : '')
@@ -381,9 +403,10 @@ const FloorMap = (() => {
         const x = cx - size.w / 2 + (count === 2 ? i * w : 0);
         const y = cy - h / 2;
         const status = sp.status || 'none';
+        const numPart = stripLabelPrefix(sp.label) + (sp.subLabel || '');
         const display = (sp.authorName && sp.authorName.trim())
-          ? sp.authorName : (sp.label || '') + (sp.subLabel || '');
-        const titleText = (sp.label || '') + (sp.subLabel ? sp.subLabel : '')
+          ? sp.authorName : numPart;
+        const titleText = (sp.label || '') + (sp.subLabel || '')
           + (sp.circleName ? `\n${sp.circleName}` : '')
           + (sp.authorName ? `\n${sp.authorName}` : '');
         const btn = el('button', {
@@ -520,8 +543,7 @@ const FloorMap = (() => {
     if (existing) {
       foot.appendChild(el('button', { class: 'btn btn-sm btn-ghost', onclick: async () => {
         UI.closeModal();
-        UI.toast('地図上の新しい位置をタップしてください');
-        await waitForFreeformReposition(floor, sp, reload);
+        await waitForFreeformReposition(sp, reload);
       } }, '位置を変更'));
       foot.appendChild(el('button', { class: 'btn btn-danger btn-sm', onclick: async () => {
         if (await UI.confirm('このスペース情報を削除しますか？')) {
@@ -637,22 +659,39 @@ const FloorMap = (() => {
     UI.openModal({ title: 'JSONインポート形式', body, footer: foot });
   }
 
-  // ── 位置変更：次にタップした位置に動かす ──
-  function waitForFreeformReposition(floor, sp, reload) {
+  // ── 位置変更：次にタップした位置に動かす（オーバーレイ方式） ──
+  function waitForFreeformReposition(sp, reload) {
     return new Promise((resolve) => {
-      const layer = document.querySelector('.grid-layer.freeform-edit');
-      if (!layer) { resolve(); return; }
-      const handler = async (e) => {
-        const rect = layer.getBoundingClientRect();
-        sp.xPct = ((e.clientX - rect.left) / rect.width) * 100;
-        sp.yPct = ((e.clientY - rect.top) / rect.height) * 100;
+      const inner = _freeformInner;
+      if (!inner) { UI.toast('地図が見つかりません'); resolve(); return; }
+
+      const imgEl = inner.querySelector('img');
+      const imgW = imgEl ? imgEl.naturalWidth : inner.offsetWidth;
+      const imgH = imgEl ? imgEl.naturalHeight : inner.offsetHeight;
+
+      const overlay = document.createElement('div');
+      overlay.style.cssText = 'position:absolute;inset:0;z-index:500;cursor:crosshair;background:rgba(107,168,168,0.10);';
+      inner.appendChild(overlay);
+
+      const hint = document.createElement('div');
+      hint.style.cssText = 'position:fixed;bottom:88px;left:50%;transform:translateX(-50%);'
+        + 'background:rgba(0,0,0,0.72);color:#fff;padding:8px 18px;border-radius:20px;'
+        + 'font-size:13px;z-index:600;pointer-events:none;white-space:nowrap;';
+      hint.textContent = '新しい位置をタップしてください';
+      document.body.appendChild(hint);
+
+      const cleanup = () => { overlay.remove(); hint.remove(); };
+
+      overlay.addEventListener('click', async (e) => {
+        const rect = inner.getBoundingClientRect();
+        sp.xPct = Math.min(100, Math.max(0, ((e.clientX - rect.left) / rect.width) * 100));
+        sp.yPct = Math.min(100, Math.max(0, ((e.clientY - rect.top) / rect.height) * 100));
+        cleanup();
         await DB.spaces.save(sp);
         UI.toast('位置を更新しました');
-        layer.removeEventListener('click', handler, true);
         reload();
         resolve();
-      };
-      layer.addEventListener('click', handler, true);
+      }, { once: true });
     });
   }
 
@@ -1014,8 +1053,9 @@ const FloorMap = (() => {
         ctx.lineWidth = 1.5;
         ctx.fillRect(x, y, w, h);
         ctx.strokeRect(x, y, w, h);
+        const numPart2 = stripLabelPrefix(sp.label) + (sp.subLabel || '');
         const text = (sp.authorName && sp.authorName.trim())
-          ? sp.authorName : (sp.label || '') + (sp.subLabel || '');
+          ? sp.authorName : numPart2;
         ctx.fillStyle = isLight ? '#333' : '#fff';
         // 長すぎたら切る
         const maxLen = count === 2 ? 4 : 6;
