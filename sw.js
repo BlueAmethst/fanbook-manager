@@ -1,4 +1,4 @@
-const CACHE_NAME = 'doujin-manager-v15';
+const CACHE_NAME = 'doujin-manager-v16';
 const CORE_ASSETS = [
   './',
   './index.html',
