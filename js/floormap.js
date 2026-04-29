@@ -494,7 +494,7 @@ const FloorMap = (() => {
           title: (sp.items && sp.items[0]) || sp.circleName || '',
           circleName: sp.circleName,
           authorName: sp.authorName,
-          spaceLabel: sp.label || ''
+          spaceLabel: (sp.label || '') + (sp.subLabel || '')
         });
         if (!ok) return;
         sp.status = 'purchased';
@@ -523,7 +523,7 @@ const FloorMap = (() => {
   }
 
   function showFreeformInfo(event, floor, sp, fields) {
-    const label = sp.label || '（無題）';
+    const label = (sp.label || '') + (sp.subLabel || '') || '（無題）';
     const body = el('div');
     body.innerHTML = `
       <div style="line-height:1.9;font-size:15px">
