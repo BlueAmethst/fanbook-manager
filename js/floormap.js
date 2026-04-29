@@ -13,7 +13,7 @@ const FloorMap = (() => {
 
   let currentMode = 'check';
 
-  const defaultSpaceSize = { w: 64, h: 34 };
+  const defaultSpaceSize = { w: 88, h: 48 };
   let _freeformInner = null; // 位置変更用 参照
 
   // ── フロア配列の取得（古いデータを自動移行） ──
@@ -54,6 +54,8 @@ const FloorMap = (() => {
     const fields = await DB.customFields.all();
     const floors = await getOrMigrateFloors(event);
     let activeFloor = floors[0];
+
+    let pdfRefUrl = null; // PDF参照データ（フロア切替をまたいで維持）
 
     const tabRow = el('div', { class: 'floor-tabs' });
     parent.appendChild(tabRow);
@@ -190,6 +192,12 @@ const FloorMap = (() => {
           class: 'btn btn-sm',
           onclick: () => exportFloorScreenshot(floor, spaces, event.name || 'event')
         }, '📷 スクショ保存'));
+
+        // PDF参照ビューワー
+        controls.appendChild(el('button', {
+          class: 'btn btn-sm',
+          onclick: () => openPdfViewer()
+        }, '📄 PDF参照'));
       } else {
         controls.appendChild(el('button', {
           class: 'btn btn-sm',
@@ -219,6 +227,50 @@ const FloorMap = (() => {
           btn.classList.toggle('active', keys[i] === currentMode);
         });
         renderMap();
+      }
+
+      function openPdfViewer() {
+        const body = el('div', { style: 'display:flex;flex-direction:column;gap:12px' });
+
+        const fileInput = el('input', { type: 'file', accept: 'application/pdf', style: 'display:none' });
+        fileInput.addEventListener('change', async (e) => {
+          const file = e.target.files[0];
+          if (!file) return;
+          pdfRefUrl = await fileToDataUrl(file);
+          UI.closeModal();
+          openPdfViewer();
+        });
+
+        const topRow = el('div', { style: 'display:flex;gap:8px;align-items:center' });
+        topRow.appendChild(el('button', {
+          class: 'btn btn-sm',
+          onclick: () => fileInput.click()
+        }, pdfRefUrl ? '📄 PDFを変更' : '📄 PDFを選択'));
+        if (pdfRefUrl) {
+          topRow.appendChild(el('button', {
+            class: 'btn btn-sm btn-ghost',
+            style: 'color:var(--status-priority)',
+            onclick: () => { pdfRefUrl = null; UI.closeModal(); }
+          }, '✕ 削除'));
+        }
+        topRow.appendChild(fileInput);
+        body.appendChild(topRow);
+
+        if (pdfRefUrl) {
+          const embed = document.createElement('embed');
+          embed.src = pdfRefUrl;
+          embed.type = 'application/pdf';
+          embed.style.cssText = 'width:100%;height:65vh;border:1px solid var(--border);border-radius:8px';
+          body.appendChild(embed);
+        } else {
+          body.appendChild(el('p', {
+            style: 'margin:0;font-size:13px;color:var(--text-dim);text-align:center;padding:32px 0'
+          }, 'PDFを選択するとここに表示されます。\niOSでは表示できない場合があります。'));
+        }
+
+        const foot = el('div', { style: 'display:flex;gap:10px;flex:1;justify-content:flex-end' });
+        foot.appendChild(el('button', { class: 'btn btn-ghost', onclick: UI.closeModal }, '閉じる'));
+        UI.openModal({ title: 'フロアマップ PDF参照', body, footer: foot, className: 'modal-pdf' });
       }
 
       function renderMap() {
@@ -404,8 +456,7 @@ const FloorMap = (() => {
         const y = cy - h / 2;
         const status = sp.status || 'none';
         const numPart = stripLabelPrefix(sp.label) + (sp.subLabel || '');
-        const display = (sp.authorName && sp.authorName.trim())
-          ? sp.authorName : numPart;
+        const display = numPart || sp.label || '?';
         const titleText = (sp.label || '') + (sp.subLabel || '')
           + (sp.circleName ? `\n${sp.circleName}` : '')
           + (sp.authorName ? `\n${sp.authorName}` : '');
@@ -502,10 +553,8 @@ const FloorMap = (() => {
     };
 
     const body = el('div');
-    const labelRow = el('div', { class: 'row' });
-    labelRow.appendChild(fld('スペース番号（例：モ-33）', 'label', sp.label));
-    labelRow.appendChild(fld('a/b（任意）', 'subLabel', sp.subLabel || ''));
-    body.appendChild(labelRow);
+    const combinedLabel = (sp.label || '') + (sp.subLabel || '');
+    body.appendChild(fld('スペース番号（例：モ-17a）', 'spaceLabel', combinedLabel));
     body.appendChild(fld('サークル名', 'circleName', sp.circleName));
     body.appendChild(fld('作家名', 'authorName', sp.authorName));
     body.appendChild(fld('頒布物（書名、カンマ区切り）', 'items', (sp.items || []).join(', ')));
@@ -555,8 +604,9 @@ const FloorMap = (() => {
     foot.appendChild(el('div', { style: 'flex:1' }));
     foot.appendChild(el('button', { class: 'btn btn-ghost', onclick: UI.closeModal }, 'キャンセル'));
     foot.appendChild(el('button', { class: 'btn btn-primary', onclick: async () => {
-      sp.label      = body.querySelector('[name=label]').value.trim();
-      sp.subLabel   = (body.querySelector('[name=subLabel]').value || '').trim().toLowerCase();
+      const { label: _lbl, subLabel: _sub } = parseLabelSub(body.querySelector('[name=spaceLabel]').value);
+      sp.label    = _lbl;
+      sp.subLabel = _sub;
       sp.circleName = body.querySelector('[name=circleName]').value.trim();
       sp.authorName = body.querySelector('[name=authorName]').value.trim();
       const itemsRaw = body.querySelector('[name=items]').value.trim();
@@ -576,7 +626,7 @@ const FloorMap = (() => {
       UI.closeModal(); UI.toast('保存しました'); reload();
     } }, '保存'));
 
-    UI.openModal({ title: existing ? `スペース ${sp.label || ''}${sp.subLabel || ''}` : '新しいスペース', body, footer: foot });
+    UI.openModal({ title: existing ? `スペース ${combinedLabel || sp.label || ''}` : '新しいスペース', body, footer: foot });
   }
 
   // ── スペースを floorId+label でグループ化 ──
@@ -602,8 +652,11 @@ const FloorMap = (() => {
     let count = 0;
     for (const row of data) {
       if (!row || typeof row !== 'object') continue;
-      const label = (row.label || '').toString().trim();
-      const sub   = (row.sub || row.subLabel || '').toString().trim().toLowerCase();
+      // 「モ-17a」形式の label から sub を自動分割（明示的な sub 指定が優先）
+      const rawLabel = (row.label || '').toString().trim();
+      const parsed   = parseLabelSub(rawLabel);
+      const label    = parsed.label;
+      const sub      = ((row.sub || row.subLabel || '').toString().trim().toLowerCase()) || parsed.subLabel;
       const xPct  = Number(row.xPct);
       const yPct  = Number(row.yPct);
       if (!label || !isFinite(xPct) || !isFinite(yPct)) continue;
@@ -635,8 +688,7 @@ const FloorMap = (() => {
       <p style="margin:0 0 8px;font-size:14px">フリーフォームに取り込むJSONの形式：</p>
       <pre style="background:var(--bg-elev);padding:10px;border-radius:8px;font-size:12px;overflow:auto;line-height:1.5">[
   {
-    "label": "モ-1",
-    "sub": "a",
+    "label": "モ-17a",
     "xPct": 22.1,
     "yPct": 18.5,
     "circleName": "サークル名",
@@ -644,14 +696,19 @@ const FloorMap = (() => {
     "items": ["新刊タイトル"],
     "price": 1000,
     "status": "want"
+  },
+  {
+    "label": "モ-17b",
+    "xPct": 22.1,
+    "yPct": 18.5
   }
 ]</pre>
       <ul style="font-size:13px;line-height:1.7;padding-left:18px">
-        <li><b>label</b>：スペース番号（必須、例：モ-1）</li>
-        <li><b>sub</b>：a/b（任意。同label・同位置のa/bは左右半分ずつ表示）</li>
+        <li><b>label</b>：スペース番号（必須）。末尾のa/bは自動で分割されます（例：モ-17a → モ-17 + a）</li>
+        <li>同じ番号でa/bを同じxPct/yPctにすると<b>左右半分ずつ</b>表示されます</li>
         <li><b>xPct/yPct</b>：画像幅・高さに対する位置 0〜100（必須）</li>
         <li><b>status</b>：priority / want / special / purchased / skip / none</li>
-        <li>同じ label+sub があれば<b>上書き</b>、なければ追加</li>
+        <li>同じ label があれば<b>上書き</b>、なければ追加</li>
       </ul>
     `;
     const foot = el('div', { style: 'display:flex;flex:1;justify-content:flex-end' });
@@ -911,6 +968,14 @@ const FloorMap = (() => {
       el('input', { type, name, value: value == null ? '' : String(value) })
     ]);
   }
+
+  // 「モ-17a」→ { label:'モ-17', subLabel:'a' }、末尾が数字+a/b のみ分割
+  function parseLabelSub(combined) {
+    const s = (combined || '').trim();
+    const m = s.match(/^(.*\d)([ab])$/i);
+    if (m) return { label: m[1], subLabel: m[2].toLowerCase() };
+    return { label: s, subLabel: '' };
+  }
   function customSelectField(f, value) {
     const sel = el('select', { 'data-cf': f.id });
     sel.appendChild(el('option', { value: '' }, '（未選択）'));
@@ -1054,8 +1119,7 @@ const FloorMap = (() => {
         ctx.fillRect(x, y, w, h);
         ctx.strokeRect(x, y, w, h);
         const numPart2 = stripLabelPrefix(sp.label) + (sp.subLabel || '');
-        const text = (sp.authorName && sp.authorName.trim())
-          ? sp.authorName : numPart2;
+        const text = numPart2 || sp.label || '?';
         ctx.fillStyle = isLight ? '#333' : '#fff';
         // 長すぎたら切る
         const maxLen = count === 2 ? 4 : 6;
