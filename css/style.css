@@ -697,14 +697,14 @@ a { color: var(--primary); text-decoration: none; }
   border: 2px solid rgba(0,0,0,0.15);
   border-radius: 5px;
   background: rgba(255,255,255,0.8);
-  font-size: 10px; color: var(--text);
+  font-size: 13px; color: var(--text);
   display: flex; align-items: center; justify-content: center;
-  font-weight: 600; pointer-events: auto; cursor: pointer;
-  padding: 0 2px; line-height: 1.05;
+  font-weight: 700; pointer-events: auto; cursor: pointer;
+  padding: 0 3px; line-height: 1.05;
   text-align: center;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.space-btn.half { font-size: 9px; padding: 0 1px; border-radius: 3px; }
+.space-btn.half { font-size: 11px; padding: 0 1px; border-radius: 3px; }
 .space-btn:active { opacity: 0.8; }
 .space-btn.status-priority  { background: var(--status-priority);  border-color: var(--status-priority);  color: #fff; }
 .space-btn.status-want      { background: var(--status-want);      border-color: var(--status-want);      color: #fff; }
@@ -717,6 +717,11 @@ a { color: var(--primary); text-decoration: none; }
 }
 .space-btn.status-special { background: var(--status-special); border-color: var(--status-special); color: #fff; }
 .space-btn.status-none    { background: rgba(255,255,255,0.6); border-color: rgba(0,0,0,0.18); color: var(--text-dim); }
+
+/* PDF参照モーダル（横幅を広げる） */
+@media (min-width: 600px) {
+  .modal.modal-pdf { max-width: min(92vw, 860px); }
+}
 
 /* ========== Grid config panel ========== */
 .grid-config {
