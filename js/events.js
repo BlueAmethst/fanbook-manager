@@ -113,7 +113,7 @@ const Events = (() => {
       DB.spaces.byEvent(ev.id)
     ]);
 
-    const normalize = (s) => (s || '').replace(/\s+/g, '').toLowerCase()
+    const normalize = (s) => (s || '').replace(/[\s\-－]+/g, '').toLowerCase()
       .replace(/[ａＡ]/g, 'a').replace(/[ｂＢ]/g, 'b');
 
     let linked = 0;
@@ -121,9 +121,9 @@ const Events = (() => {
     for (const w of wishes) {
       if (!w.spaceCode) continue;
       const wCode = normalize(w.spaceCode);
-      // スペースの label と比較
+      // スペースの label+subLabel と比較（ハイフン除去・a/b区別あり）
       const matched = spaces.find((s) => {
-        const sl = normalize(s.label || '');
+        const sl = normalize((s.label || '') + (s.subLabel || ''));
         return sl && (sl === wCode || wCode.includes(sl) || sl.includes(wCode));
       });
       if (matched) {

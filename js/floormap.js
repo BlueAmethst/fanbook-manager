@@ -193,6 +193,12 @@ const FloorMap = (() => {
           onclick: () => exportFloorScreenshot(floor, spaces, event.name || 'event')
         }, '📷 スクショ保存'));
 
+        // 一括ずらし
+        controls.appendChild(el('button', {
+          class: 'btn btn-sm',
+          onclick: () => openBulkShift(floor, event, reload)
+        }, '↔ 一括ずらし'));
+
         // PDF参照ビューワー
         controls.appendChild(el('button', {
           class: 'btn btn-sm',
@@ -750,6 +756,41 @@ const FloorMap = (() => {
         resolve();
       }, { once: true });
     });
+  }
+
+  // ── 一括ずらし（フリーフォーム） ──
+  function openBulkShift(floor, event, reload) {
+    const body = el('div');
+    body.innerHTML = `<p class="muted" style="margin-top:0;font-size:13px">このフロアの全ボタンを、指定した分だけまとめてずらします。<br>マイナス値も使えます（例：左に動かすなら X に -2）。</p>`;
+    const row = el('div', { class: 'row' });
+    row.appendChild(numFld('X方向（横・%）', 'shiftX', 0));
+    row.appendChild(numFld('Y方向（縦・%）', 'shiftY', 0));
+    body.appendChild(row);
+    body.appendChild(el('p', { style: 'font-size:12px;color:var(--text-dim);margin-top:4px' },
+      '※ 1% = 画像の幅/高さの1/100です。少しずつ試してください。'));
+
+    const foot = el('div', { style: 'display:flex;gap:10px;flex:1;justify-content:flex-end' });
+    foot.appendChild(el('button', { class: 'btn btn-ghost', onclick: UI.closeModal }, 'キャンセル'));
+    foot.appendChild(el('button', { class: 'btn btn-primary', onclick: async () => {
+      const dx = parseFloat(body.querySelector('[name=shiftX]').value) || 0;
+      const dy = parseFloat(body.querySelector('[name=shiftY]').value) || 0;
+      if (dx === 0 && dy === 0) { UI.toast('移動量が 0 です'); return; }
+
+      const spaces = await getFloorSpaces(event.id, floor.id, event.floors);
+      let count = 0;
+      for (const sp of spaces) {
+        if (sp.xPct == null || sp.yPct == null) continue;
+        sp.xPct = Math.min(100, Math.max(0, sp.xPct + dx));
+        sp.yPct = Math.min(100, Math.max(0, sp.yPct + dy));
+        await DB.spaces.save(sp);
+        count++;
+      }
+      UI.closeModal();
+      UI.toast(`${count} 件のボタンを移動しました`);
+      reload();
+    } }, '適用'));
+
+    UI.openModal({ title: '全ボタンを一括ずらし', body, footer: foot });
   }
 
   // ── スペースサイズ設定（フリーフォーム） ──
