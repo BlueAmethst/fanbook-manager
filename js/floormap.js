@@ -639,7 +639,7 @@ const FloorMap = (() => {
   function groupSpacesByLabel(spaces) {
     const groups = {};
     for (const sp of spaces) {
-      const key = sp.label ? `lbl:${sp.label}` : `id:${sp.id}`;
+      const key = sp.label ? `lbl:${sp.label}|${sp.subLabel || ''}` : `id:${sp.id}`;
       (groups[key] = groups[key] || []).push(sp);
     }
     return groups;
