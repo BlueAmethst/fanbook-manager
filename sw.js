@@ -1,22 +1,22 @@
-const CACHE_NAME = 'doujin-manager-v18';
+const CACHE_NAME = 'doujin-manager-v19';
 const CORE_ASSETS = [
   './',
   './index.html',
   './manifest.json',
-  './css/style.css?v=18',
-  './js/app.js?v=18',
-  './js/db.js?v=18',
-  './js/ui.js?v=18',
-  './js/ocr.js?v=18',
-  './js/bulk.js?v=18',
-  './js/library.js?v=18',
-  './js/wishlist.js?v=18',
-  './js/events.js?v=18',
-  './js/floormap.js?v=18',
-  './js/exporter.js?v=18',
-  './js/gmail.js?v=18',
-  './js/stats.js?v=18',
-  './js/settings.js?v=18'
+  './css/style.css?v=19',
+  './js/app.js?v=19',
+  './js/db.js?v=19',
+  './js/ui.js?v=19',
+  './js/ocr.js?v=19',
+  './js/bulk.js?v=19',
+  './js/library.js?v=19',
+  './js/wishlist.js?v=19',
+  './js/events.js?v=19',
+  './js/floormap.js?v=19',
+  './js/exporter.js?v=19',
+  './js/gmail.js?v=19',
+  './js/stats.js?v=19',
+  './js/settings.js?v=19'
 ];
 
 // Hosts that should never be served from cache
