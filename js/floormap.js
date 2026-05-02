@@ -519,7 +519,22 @@ const FloorMap = (() => {
         UI.toast('「欲しい」に戻しました');
         reload();
       } else {
-        openFreeformSpaceForm(event, floor, sp, null, fields, reload);
+        // 未購入本が紐付いていればリストを表示、なければ編集フォームへ
+        const linked = await loadLinkedWishes(sp);
+        if (linked.length > 0) {
+          const label = (sp.label || '') + (sp.subLabel || '') || '（無題）';
+          const body = el('div');
+          body.appendChild(renderWishCards(linked));
+          const foot = el('div', { style: 'display:flex;gap:10px;flex:1;justify-content:flex-end' });
+          foot.appendChild(el('button', { class: 'btn btn-ghost', onclick: UI.closeModal }, '閉じる'));
+          foot.appendChild(el('button', { class: 'btn btn-sm btn-ghost', onclick: () => {
+            UI.closeModal();
+            openFreeformSpaceForm(event, floor, sp, null, fields, reload);
+          } }, '⚙ スペースを編集'));
+          UI.openModal({ title: `スペース ${label}`, body, footer: foot });
+        } else {
+          openFreeformSpaceForm(event, floor, sp, null, fields, reload);
+        }
       }
     } else if (currentMode === 'info') {
       showFreeformInfo(event, floor, sp, fields);
@@ -528,7 +543,7 @@ const FloorMap = (() => {
     }
   }
 
-  function showFreeformInfo(event, floor, sp, fields) {
+  async function showFreeformInfo(event, floor, sp, fields) {
     const label = (sp.label || '') + (sp.subLabel || '') || '（無題）';
     const body = el('div');
     body.innerHTML = `
@@ -543,6 +558,8 @@ const FloorMap = (() => {
             .map((f) => `<div><span class="muted">${esc(f.name)}：</span>${esc(sp.customFields[f.id])}</div>`).join('')}
       </div>
     `;
+    const linked = await loadLinkedWishes(sp);
+    if (linked.length > 0) body.appendChild(renderWishCards(linked));
     const foot = el('div', { style: 'display:flex;gap:10px;flex:1;justify-content:flex-end' });
     foot.appendChild(el('button', { class: 'btn btn-ghost', onclick: UI.closeModal }, '閉じる'));
     UI.openModal({ title: `スペース ${label}`, body, footer: foot });
@@ -633,6 +650,38 @@ const FloorMap = (() => {
     } }, '保存'));
 
     UI.openModal({ title: existing ? `スペース ${combinedLabel || sp.label || ''}` : '新しいスペース', body, footer: foot });
+  }
+
+  // ── このスペースに紐付いた未購入本を取得 ──
+  async function loadLinkedWishes(sp) {
+    const all = await DB.wishlist.all();
+    return all.filter((w) => w.linkedSpaceId === sp.id);
+  }
+
+  // ── 未購入本カード群をDOMとして生成 ──
+  function renderWishCards(linked) {
+    const section = el('div', { style: 'margin-top:12px;border-top:1px solid var(--border);padding-top:10px' });
+    section.appendChild(el('div', { style: 'font-weight:600;margin-bottom:6px;font-size:13px' },
+      `📌 未購入本（${linked.length}件）`));
+    const priLabels = { '1': '🔴最優先', '2': '🟡欲しい', '3': '🔵できたら' };
+    for (const w of linked) {
+      const wCard = el('div', { class: 'card', style: 'padding:8px;margin-bottom:4px;cursor:pointer' });
+      wCard.appendChild(el('div', { class: 'card-title', style: 'font-size:13px;margin:0 0 4px' },
+        w.title || '(タイトル未定)'));
+      const metaParts = [];
+      if (w.circleName) metaParts.push(w.circleName);
+      if (w.couplingLeft && w.couplingRight) metaParts.push(`♡${w.couplingLeft}×${w.couplingRight}`);
+      if (typeof w.price === 'number') metaParts.push(`¥${w.price.toLocaleString()}`);
+      if (w.priority) metaParts.push(priLabels[String(w.priority)] || '');
+      if (metaParts.length) wCard.appendChild(el('div', { class: 'card-sub', style: 'font-size:11px' },
+        metaParts.filter(Boolean).join(' / ')));
+      if (w.eventNotes) wCard.appendChild(el('div', { class: 'muted', style: 'font-size:11px;margin-top:2px' },
+        w.eventNotes));
+      wCard.appendChild(el('div', { class: 'muted', style: 'font-size:10px;margin-top:4px' }, '👆 タップして詳細編集'));
+      wCard.addEventListener('click', () => { UI.closeModal(); Wishlist.openForm(w); });
+      section.appendChild(wCard);
+    }
+    return section;
   }
 
   // ── スペースを floorId+label でグループ化 ──

@@ -113,8 +113,17 @@ const Events = (() => {
       DB.spaces.byEvent(ev.id)
     ]);
 
-    const normalize = (s) => (s || '').replace(/[\s\-－]+/g, '').toLowerCase()
-      .replace(/[ａＡ]/g, 'a').replace(/[ｂＢ]/g, 'b');
+    const normalize = (s) => {
+      let t = (s || '').replace(/[\s\-－＝=・]+/g, '').toLowerCase();
+      // 全角英数字→半角
+      t = t.replace(/[Ａ-Ｚａ-ｚ]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0));
+      t = t.replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFF10 + 48));
+      // 会場プレフィックス除去（西2・東1 など、最初のカタカナ/ひらがなより前を除去）
+      t = t.replace(/^[^ァ-ヶぁ-ゖ]+/, '');
+      // 先頭ゼロを除去（05b → 5b、017a → 17a）
+      t = t.replace(/(^|[^\d])0+(\d)/g, '$1$2');
+      return t;
+    };
 
     let linked = 0;
     let alreadyLinked = 0;

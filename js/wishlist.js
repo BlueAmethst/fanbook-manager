@@ -118,14 +118,18 @@ const Wishlist = (() => {
         el('button', { type: 'button', class: 'btn btn-sm btn-primary',
           onclick: () => openForm(null, fields, chars1, chars2, events, appLists, folders) }, '＋追加'),
         el('button', { type: 'button', class: 'btn btn-sm btn-ghost',
-          onclick: () => openImportPanel(fields, chars1, chars2, events, appLists, folders) }, '🖼️ 画像取込'),
-        el('button', { type: 'button', class: 'btn btn-sm btn-ghost',
-          onclick: () => openCsvImportPanel(folders) }, '📋 CSV取込'),
-        el('button', { type: 'button', class: 'btn btn-sm btn-ghost',
-          onclick: () => downloadWishlistCsv(currentFilteredItems) }, '📤 CSVダウンロード')
+          onclick: () => openImportPanel(fields, chars1, chars2, events, appLists, folders) }, '🖼️ 画像取込')
       ])
     ]);
     container.appendChild(head);
+
+    // CSVボタンバー（スマホで折り返し対応）
+    const csvBar = el('div', { style: 'display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap' });
+    csvBar.appendChild(el('button', { type: 'button', class: 'btn btn-sm btn-ghost',
+      onclick: () => openCsvImportPanel(folders) }, '📋 CSV取込'));
+    csvBar.appendChild(el('button', { type: 'button', class: 'btn btn-sm btn-ghost',
+      onclick: () => downloadWishlistCsv(currentFilteredItems) }, '📤 CSVダウンロード'));
+    container.appendChild(csvBar);
 
     const searchWrap = el('div', { class: 'searchbar' });
     const input = el('input', { type: 'search', placeholder: '書名・サークル・スペース・カップリング・備考' });
