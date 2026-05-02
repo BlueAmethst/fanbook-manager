@@ -1,5 +1,5 @@
 // ====== アプリバージョン ======
-const APP_VERSION = '2026-05-02 rev.15';
+const APP_VERSION = '2026-05-02 rev.16';
 
 // ====== Router + App bootstrap ======
 const App = (() => {
@@ -57,7 +57,7 @@ const App = (() => {
 
     // Register service worker for PWA
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('./sw.js?v=18').catch(() => {});
+      navigator.serviceWorker.register('./sw.js?v=19').catch(() => {});
     }
 
     route();

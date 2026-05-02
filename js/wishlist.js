@@ -2,6 +2,101 @@
 const Wishlist = (() => {
   const { el, esc } = UI;
 
+  // ── CSV インポート／エクスポート 共通定数 ──
+  const CSV_HEADERS = ['書名','サークル名','作家名','カップリング左','カップリング右','価格','スペースコード','イベント名','成人向け区分','サイズ','優先度','X（Twitter）','イベントメモ','メモ'];
+  const CSV_FIELD_MAP = {
+    '書名':'title','サークル名':'circleName','作家名':'authorName',
+    'カップリング左':'couplingLeft','カップリング右':'couplingRight',
+    '価格':'price','スペースコード':'spaceCode','イベント名':'eventName',
+    '成人向け区分':'rating','サイズ':'size','優先度':'priority',
+    'X（Twitter）':'twitter','イベントメモ':'eventNotes','メモ':'notes'
+  };
+
+  function parseCsvRow(line) {
+    const result = [];
+    let cur = '', inQuote = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (inQuote) {
+        if (ch === '"') {
+          if (line[i + 1] === '"') { cur += '"'; i++; } else inQuote = false;
+        } else { cur += ch; }
+      } else {
+        if (ch === '"') { inQuote = true; }
+        else if (ch === ',') { result.push(cur); cur = ''; }
+        else { cur += ch; }
+      }
+    }
+    result.push(cur);
+    return result;
+  }
+
+  function parseCsv(text) {
+    const lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+    if (!lines.length) return { headers: [], rows: [] };
+    const headers = parseCsvRow(lines[0]).map((h) => h.trim());
+    const rows = lines.slice(1).filter((l) => l.trim()).map((l) => {
+      const vals = parseCsvRow(l);
+      const obj = {};
+      headers.forEach((h, i) => { obj[h] = (vals[i] || '').trim(); });
+      return obj;
+    });
+    return { headers, rows };
+  }
+
+  function readCsvFile(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const bytes = e.target.result;
+        let text = new TextDecoder('utf-8').decode(bytes);
+        if (text.includes('�')) {
+          try { text = new TextDecoder('shift_jis').decode(bytes); } catch (_) {}
+        }
+        if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+        resolve(text);
+      };
+      reader.onerror = reject;
+      reader.readAsArrayBuffer(file);
+    });
+  }
+
+  function escapeCsvField(val) {
+    if (val == null) return '';
+    const s = String(val);
+    if (s.includes(',') || s.includes('"') || s.includes('\n')) return '"' + s.replace(/"/g, '""') + '"';
+    return s;
+  }
+
+  function downloadCsvTemplate() {
+    const sample = ['例：タイトル','例：サークルABC','例：山田花子','キャラA','キャラB','1000','ナ-37b','コミケ103','全年齢','A5','1','@example','新刊あり',''];
+    const csv = '﻿' + CSV_HEADERS.join(',') + '\n' + sample.join(',') + '\n';
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8;' }));
+    a.download = 'wishlist_template.csv';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  }
+
+  function downloadWishlistCsv(items) {
+    const lines = ['﻿' + CSV_HEADERS.join(',')];
+    for (const b of items) {
+      const row = [
+        b.title, b.circleName, b.authorName,
+        b.couplingLeft, b.couplingRight,
+        b.price != null ? String(b.price) : '',
+        b.spaceCode, b.eventName, b.rating,
+        b.size || b.format || '',
+        b.priority != null ? String(b.priority) : '',
+        b.twitter, b.eventNotes, b.notes
+      ].map(escapeCsvField);
+      lines.push(row.join(','));
+    }
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([lines.join('\n') + '\n'], { type: 'text/csv;charset=utf-8;' }));
+    a.download = `wishlist_${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  }
+
   // ── 一覧画面 ──
   async function render() {
     const container = el('div');
@@ -23,7 +118,11 @@ const Wishlist = (() => {
         el('button', { type: 'button', class: 'btn btn-sm btn-primary',
           onclick: () => openForm(null, fields, chars1, chars2, events, appLists, folders) }, '＋追加'),
         el('button', { type: 'button', class: 'btn btn-sm btn-ghost',
-          onclick: () => openImportPanel(fields, chars1, chars2, events, appLists, folders) }, '🖼️ 画像取込')
+          onclick: () => openImportPanel(fields, chars1, chars2, events, appLists, folders) }, '🖼️ 画像取込'),
+        el('button', { type: 'button', class: 'btn btn-sm btn-ghost',
+          onclick: () => openCsvImportPanel(folders) }, '📋 CSV取込'),
+        el('button', { type: 'button', class: 'btn btn-sm btn-ghost',
+          onclick: () => downloadWishlistCsv(currentFilteredItems) }, '📤 CSVダウンロード')
       ])
     ]);
     container.appendChild(head);
@@ -66,6 +165,8 @@ const Wishlist = (() => {
 
     const list = el('div');
     container.appendChild(list);
+
+    let currentFilteredItems = items.slice();
 
     function updateBulkUI() {
       const n = selectMode.selected.size;
@@ -145,6 +246,7 @@ const Wishlist = (() => {
         if (sort === 'date_asc') return (a.createdAt || '').localeCompare(b.createdAt || '');
         return (b.createdAt || '').localeCompare(a.createdAt || '');
       });
+      currentFilteredItems = filtered;
 
       if (!filtered.length) {
         list.appendChild(el('div', { class: 'empty' }, [
@@ -625,6 +727,205 @@ const Wishlist = (() => {
 
     // モーダル開いた直後にクリップボード自動取込を試行
     setTimeout(() => { tryImportPaste(false); }, 100);
+  }
+
+  // ── CSVから一括取込 ──
+  async function openCsvImportPanel(folders) {
+    folders = folders || [];
+    const body = el('div');
+
+    // テンプレートDL案内
+    const tplRow = el('div', { style: 'margin-bottom:10px;display:flex;align-items:center;gap:8px;flex-wrap:wrap' });
+    const tplBtn = el('button', { type: 'button', class: 'btn btn-ghost btn-sm' }, '📥 テンプレートをダウンロード');
+    tplBtn.addEventListener('click', downloadCsvTemplate);
+    tplRow.appendChild(tplBtn);
+    tplRow.appendChild(el('span', { class: 'muted', style: 'font-size:11px' },
+      'Excelで記入→「名前をつけて保存」→ファイルの種類「CSV（カンマ区切り）」'));
+    body.appendChild(tplRow);
+
+    // ファイル選択
+    const fileInput = el('input', { type: 'file', accept: '.csv', style: 'width:100%;margin-bottom:8px' });
+    body.appendChild(fileInput);
+
+    // フォルダ選択
+    const importFolderSel = el('select', { name: 'importFolderId' });
+    importFolderSel.appendChild(el('option', { value: '' }, '（フォルダなし）'));
+    for (const f of folders) importFolderSel.appendChild(el('option', { value: f.id }, f.name));
+    body.appendChild(el('div', { class: 'field', style: 'margin-bottom:10px' },
+      [el('label', {}, '登録先フォルダ（取込時に一括適用）'), importFolderSel]));
+
+    const preview = el('div', { style: 'margin-top:10px;max-height:50vh;overflow:auto' });
+    body.appendChild(preview);
+
+    const foot = el('div', { style: 'display:flex;gap:10px;flex:1;justify-content:flex-end' });
+    foot.appendChild(el('button', { type: 'button', class: 'btn btn-ghost', onclick: UI.closeModal }, '閉じる'));
+    const saveBtn = el('button', { type: 'button', class: 'btn btn-primary' }, '選択した行を取込');
+    saveBtn.style.display = 'none';
+    foot.appendChild(saveBtn);
+
+    let previewTbody = null;
+
+    fileInput.addEventListener('change', async () => {
+      const file = fileInput.files[0];
+      if (!file) return;
+      preview.innerHTML = '';
+      previewTbody = null;
+      saveBtn.style.display = 'none';
+
+      let rows;
+      try {
+        const text = await readCsvFile(file);
+        rows = parseCsv(text).rows;
+      } catch (err) {
+        preview.appendChild(el('div', { style: 'color:var(--danger,#c44);padding:8px' }, `読み込みエラー：${err.message}`));
+        return;
+      }
+
+      if (!rows.length) {
+        preview.appendChild(el('div', { class: 'muted', style: 'padding:8px' }, 'CSVにデータ行がありません'));
+        return;
+      }
+
+      // 重複チェック用に既存ウィッシュリストを取得
+      const existingWishes = await DB.wishlist.all();
+      const existingByTitle = new Map(existingWishes.filter((w) => w.title).map((w) => [w.title, w]));
+
+      // 全選択／全解除ボタン行
+      const ctrlRow = el('div', { style: 'margin-bottom:6px;display:flex;gap:8px;align-items:center' });
+      const selAllBtn = el('button', { type: 'button', class: 'btn btn-ghost btn-sm' }, '全選択');
+      const selNoneBtn = el('button', { type: 'button', class: 'btn btn-ghost btn-sm' }, '全解除');
+      const countInfo = el('span', { class: 'muted', style: 'font-size:11px' }, `${rows.length}行`);
+      ctrlRow.appendChild(selAllBtn);
+      ctrlRow.appendChild(selNoneBtn);
+      ctrlRow.appendChild(countInfo);
+      preview.appendChild(ctrlRow);
+
+      // プレビューテーブル
+      const table = document.createElement('table');
+      table.style.cssText = 'width:100%;border-collapse:collapse;font-size:12px';
+
+      const thead = table.createTHead();
+      const htr = thead.insertRow();
+      ['', '状態', '書名', 'サークル', 'スペース', '優先度'].forEach((label) => {
+        const th = document.createElement('th');
+        th.textContent = label;
+        th.style.cssText = 'padding:4px 6px;border-bottom:1px solid var(--border,#ddd);text-align:left;white-space:nowrap';
+        htr.appendChild(th);
+      });
+
+      const tbody = table.createTBody();
+      rows.forEach((row, i) => {
+        const title = row['書名'] || '';
+        const existing = existingByTitle.get(title);
+        const isOverwrite = !!(title && existing);
+
+        const tr = tbody.insertRow();
+        tr.style.background = i % 2 === 0 ? '' : 'var(--bg-alt,#f8f8f8)';
+        tr.__rowData = row;
+        tr.__isOverwrite = isOverwrite;
+        tr.__existingItem = existing || null;
+
+        // チェックボックス
+        const cbTd = tr.insertCell();
+        cbTd.style.cssText = 'padding:4px;text-align:center';
+        const cb = document.createElement('input');
+        cb.type = 'checkbox'; cb.checked = true;
+        cbTd.appendChild(cb);
+
+        // 状態バッジ
+        const statusTd = tr.insertCell();
+        statusTd.style.padding = '4px';
+        const badge = document.createElement('span');
+        badge.textContent = isOverwrite ? '上書き' : '新規';
+        badge.style.cssText = `display:inline-block;font-size:10px;padding:1px 6px;border-radius:8px;color:#fff;background:${isOverwrite ? '#e8a020' : 'var(--accent,#6BA8A8)'}`;
+        statusTd.appendChild(badge);
+
+        // 書名・サークル・スペース・優先度
+        [
+          title || '（書名なし）',
+          row['サークル名'] || '',
+          row['スペースコード'] || '',
+          row['優先度'] === '1' ? '最優先' : row['優先度'] === '2' ? '欲しい' : row['優先度'] === '3' ? 'できたら' : ''
+        ].forEach((text) => {
+          const td = tr.insertCell();
+          td.textContent = text;
+          td.style.cssText = 'padding:4px 6px;color:var(--text,#333);max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+        });
+      });
+
+      preview.appendChild(table);
+      previewTbody = tbody;
+      saveBtn.style.display = '';
+
+      selAllBtn.addEventListener('click', () => {
+        tbody.querySelectorAll('input[type=checkbox]').forEach((c) => { c.checked = true; });
+      });
+      selNoneBtn.addEventListener('click', () => {
+        tbody.querySelectorAll('input[type=checkbox]').forEach((c) => { c.checked = false; });
+      });
+    });
+
+    saveBtn.addEventListener('click', async () => {
+      if (!previewTbody) return;
+      const folderId = importFolderSel.value || null;
+      let newCount = 0, overwriteCount = 0;
+
+      for (const tr of [...previewTbody.rows]) {
+        const cb = tr.querySelector('input[type=checkbox]');
+        if (!cb || !cb.checked) continue;
+        const row = tr.__rowData;
+        const now = new Date().toISOString();
+        const price = row['価格'] !== '' ? Number(row['価格']) : null;
+        const priority = row['優先度'] !== '' ? Number(row['優先度']) : null;
+
+        if (tr.__isOverwrite && tr.__existingItem) {
+          const updated = { ...tr.__existingItem };
+          Object.entries(CSV_FIELD_MAP).forEach(([csvKey, field]) => {
+            if (field !== 'price' && field !== 'priority' && row[csvKey] !== undefined) {
+              updated[field] = row[csvKey] || '';
+            }
+          });
+          updated.price = isNaN(price) ? null : price;
+          updated.priority = isNaN(priority) ? null : priority;
+          if (folderId !== null) updated.folderId = folderId;
+          updated.updatedAt = now;
+          await DB.wishlist.save(updated);
+          overwriteCount++;
+        } else {
+          await DB.wishlist.save({
+            id: uid('wish_'),
+            title: row['書名'] || '',
+            circleName: row['サークル名'] || '',
+            authorName: row['作家名'] || '',
+            twitter: row['X（Twitter）'] || '',
+            couplingLeft: row['カップリング左'] || '',
+            couplingRight: row['カップリング右'] || '',
+            price: isNaN(price) ? null : price,
+            spaceCode: row['スペースコード'] || '',
+            eventName: row['イベント名'] || '',
+            rating: row['成人向け区分'] || '',
+            size: row['サイズ'] || '',
+            priority: isNaN(priority) ? null : priority,
+            eventNotes: row['イベントメモ'] || '',
+            notes: row['メモ'] || '',
+            customFields: {},
+            folderId,
+            createdAt: now,
+            updatedAt: now
+          });
+          newCount++;
+        }
+      }
+
+      UI.closeModal();
+      const parts = [];
+      if (newCount) parts.push(`新規${newCount}件`);
+      if (overwriteCount) parts.push(`上書き${overwriteCount}件`);
+      UI.toast(`${parts.join('・')}を登録しました`);
+      App.route();
+    });
+
+    UI.openModal({ title: 'CSVから一括取込', body, footer: foot });
   }
 
   // デフォルト項目の入力形式に応じたフィールドレンダリング
