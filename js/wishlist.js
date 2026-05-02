@@ -387,6 +387,13 @@ const Wishlist = (() => {
     };
     await DB.books.save(book);
     await DB.wishlist.remove(item.id);
+    // 紐付きスペースのステータスを購入済（緑）に更新
+    if (item.linkedSpaceId) {
+      try {
+        const sp = await DB.spaces.get(item.linkedSpaceId);
+        if (sp) { sp.status = 'purchased'; await DB.spaces.save(sp); }
+      } catch (_) {}
+    }
     if (!opts.silent) UI.toast('同人誌管理に移動しました');
   }
 
@@ -561,6 +568,13 @@ const Wishlist = (() => {
         type: 'button', class: 'btn btn-sm btn-danger',
         onclick: async () => {
           if (await UI.confirm('この本を未購入リストから削除しますか？\n（購入不可だった本など）')) {
+            // 紐付きスペースのステータスをスキップ（グレー）に更新
+            if (b.linkedSpaceId) {
+              try {
+                const sp = await DB.spaces.get(b.linkedSpaceId);
+                if (sp) { sp.status = 'skip'; await DB.spaces.save(sp); }
+              } catch (_) {}
+            }
             await DB.wishlist.remove(b.id);
             UI.closeModal(); UI.toast('削除しました'); App.route();
           }

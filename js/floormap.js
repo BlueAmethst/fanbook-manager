@@ -218,12 +218,26 @@ const FloorMap = (() => {
       const spaces = await getFloorSpaces(event.id, floor.id, floors);
       const spaceMap = buildSpaceMap(spaces);
 
+      // 未購入リストの優先度マップ（spaceId → 最高優先度数値）
+      async function buildWishPriorityMap() {
+        const all = await DB.wishlist.all();
+        const map = {};
+        for (const w of all) {
+          if (!w.linkedSpaceId || !w.priority) continue;
+          const p = Number(w.priority);
+          if (!map[w.linkedSpaceId] || p < map[w.linkedSpaceId]) map[w.linkedSpaceId] = p;
+        }
+        return map;
+      }
+      let wishPriorityBySpace = await buildWishPriorityMap();
+
       async function reload() {
         const fresh = await getFloorSpaces(event.id, floor.id, floors);
         spaces.length = 0; spaces.push(...fresh);
         const m = buildSpaceMap(fresh);
         for (const k of Object.keys(spaceMap)) delete spaceMap[k];
         Object.assign(spaceMap, m);
+        wishPriorityBySpace = await buildWishPriorityMap();
         renderMap();
       }
 
@@ -293,7 +307,7 @@ const FloorMap = (() => {
           }
           const img = el('img', { src: floor.image, alt: '' });
           inner.appendChild(img);
-          const place = () => placeFreeformButtons(inner, floor, event, spaces, fields, reload, img.naturalWidth, img.naturalHeight);
+          const place = () => placeFreeformButtons(inner, floor, event, spaces, fields, reload, img.naturalWidth, img.naturalHeight, wishPriorityBySpace);
           img.onload = place;
           if (img.complete && img.naturalWidth) place();
           return;
@@ -431,7 +445,7 @@ const FloorMap = (() => {
   }
 
   // ── ボタン配置（フリーフォーム） ──
-  function placeFreeformButtons(inner, floor, event, spaces, fields, reload, imgW, imgH) {
+  function placeFreeformButtons(inner, floor, event, spaces, fields, reload, imgW, imgH, wishPriorityBySpace) {
     _freeformInner = inner;
     [...inner.querySelectorAll('.space-btn, .grid-layer')].forEach((n) => n.remove());
     const layer = el('div', {
@@ -460,7 +474,12 @@ const FloorMap = (() => {
         const h = size.h;
         const x = cx - size.w / 2 + (count === 2 ? i * w : 0);
         const y = cy - h / 2;
-        const status = sp.status || 'none';
+        // statusがnoneの場合、紐付き未購入本の優先度で色補完
+        let status = sp.status || 'none';
+        if (status === 'none' && wishPriorityBySpace && wishPriorityBySpace[sp.id]) {
+          const priToStatus = { 1: 'priority', 2: 'want', 3: 'special' };
+          status = priToStatus[wishPriorityBySpace[sp.id]] || 'none';
+        }
         const numPart = stripLabelPrefix(sp.label) + (sp.subLabel || '');
         const display = numPart || sp.label || '?';
         const titleText = (sp.label || '') + (sp.subLabel || '')
