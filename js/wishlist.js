@@ -276,7 +276,19 @@ const Wishlist = (() => {
   }
 
   // 優先度ドット
-  const PRIORITY_COLORS = { '1': '#B85555', '2': '#C07830', '3': '#A89020' };
+  const PRIORITY_COLORS = { '1': '#B85555', '2': '#C07830', '3': '#A89020', '4': '#4B9B4B', '5': '#888888' };
+  const PRIORITY_TO_STATUS = { 1: 'priority', 2: 'want', 3: 'special', 4: 'purchased', 5: 'skip' };
+
+  // 優先度変更をフロアマップスペースに同期
+  async function syncPriorityToSpace(item) {
+    if (!item.linkedSpaceId || item.priority == null) return;
+    const newStatus = PRIORITY_TO_STATUS[Number(item.priority)];
+    if (!newStatus) return;
+    try {
+      const sp = await DB.spaces.get(item.linkedSpaceId);
+      if (sp) { sp.status = newStatus; await DB.spaces.save(sp); }
+    } catch (_) {}
+  }
   function priorityDot(priority) {
     const color = PRIORITY_COLORS[String(priority || '')];
     if (!color) return null;
@@ -517,7 +529,9 @@ const Wishlist = (() => {
       { value: '',  label: '（未設定）' },
       { value: '1', label: '● 最優先', color: '#B85555' },
       { value: '2', label: '● 欲しい', color: '#C07830' },
-      { value: '3', label: '● できたら欲しい', color: '#A89020' }
+      { value: '3', label: '● できたら欲しい', color: '#A89020' },
+      { value: '4', label: '● 購入済', color: '#4B9B4B' },
+      { value: '5', label: '● 購入しない', color: '#888888' }
     ].forEach(({ value, label, color }) => {
       const opt = el('option', { value }, label);
       if (color) opt.style.color = color;
@@ -604,6 +618,7 @@ const Wishlist = (() => {
       data.updatedAt = new Date().toISOString();
       data.createdAt = existing ? (b.createdAt || data.updatedAt) : data.updatedAt;
       await DB.wishlist.save(data);
+      await syncPriorityToSpace(data);
       UI.closeModal(); UI.toast('保存しました'); App.route();
     } }, '保存'));
 

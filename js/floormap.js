@@ -477,7 +477,7 @@ const FloorMap = (() => {
         // statusがnoneの場合、紐付き未購入本の優先度で色補完
         let status = sp.status || 'none';
         if (status === 'none' && wishPriorityBySpace && wishPriorityBySpace[sp.id]) {
-          const priToStatus = { 1: 'priority', 2: 'want', 3: 'special' };
+          const priToStatus = { 1: 'priority', 2: 'want', 3: 'special', 4: 'purchased', 5: 'skip' };
           status = priToStatus[wishPriorityBySpace[sp.id]] || 'none';
         }
         const numPart = stripLabelPrefix(sp.label) + (sp.subLabel || '');
@@ -528,6 +528,7 @@ const FloorMap = (() => {
         const book = await Library.createFromSpace(sp, event);
         sp.bookId = book.id;
         await DB.spaces.save(sp);
+        await syncStatusToWishlist(sp);
         UI.toast('購入済に変更・本棚に追加しました');
         reload();
       } else if (sp.status === 'purchased') {
@@ -535,6 +536,7 @@ const FloorMap = (() => {
         if (sp.bookId) { try { await DB.books.remove(sp.bookId); } catch (_) {} }
         sp.status = 'want'; sp.bookId = null;
         await DB.spaces.save(sp);
+        await syncStatusToWishlist(sp);
         UI.toast('「欲しい」に戻しました');
         reload();
       } else {
@@ -665,10 +667,26 @@ const FloorMap = (() => {
         if (n) sp.customFields[f.id] = n.value;
       }
       await DB.spaces.save(sp);
+      await syncStatusToWishlist(sp);
       UI.closeModal(); UI.toast('保存しました'); reload();
     } }, '保存'));
 
     UI.openModal({ title: existing ? `スペース ${combinedLabel || sp.label || ''}` : '新しいスペース', body, footer: foot });
+  }
+
+  // スペースのステータス変更をウィッシュリストの優先度に同期
+  async function syncStatusToWishlist(sp) {
+    const statusToPri = { priority: 1, want: 2, special: 3, purchased: 4, skip: 5 };
+    const newPri = statusToPri[sp.status];
+    if (newPri == null) return;
+    try {
+      const allW = await DB.wishlist.all();
+      for (const w of allW.filter((x) => x.linkedSpaceId === sp.id)) {
+        w.priority = newPri;
+        w.updatedAt = new Date().toISOString();
+        await DB.wishlist.save(w);
+      }
+    } catch (_) {}
   }
 
   // ── このスペースに紐付いた未購入本を取得 ──
