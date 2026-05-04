@@ -23,9 +23,10 @@
 
   --status-priority:  #D06868;
   --status-want:      #C8A440;
+  --status-soft:      #C8C048;
   --status-purchased: #68A878;
   --status-skip:      #BEB8B0;
-  --status-special:   #6898B8;
+  --status-special:   #68A8C8;
 
   --shadow-sm: 0 1px 3px rgba(80,60,40,0.07), 0 1px 2px rgba(80,60,40,0.04);
   --shadow-md: 0 3px 10px rgba(80,60,40,0.09), 0 1px 3px rgba(80,60,40,0.04);
@@ -715,6 +716,7 @@ a { color: var(--primary); text-decoration: none; }
   display: flex; align-items: center; justify-content: center;
   font-size: 12px; font-weight: 900;
 }
+.space-btn.status-soft    { background: var(--status-soft);    border-color: var(--status-soft);    color: var(--text); }
 .space-btn.status-special { background: var(--status-special); border-color: var(--status-special); color: #fff; }
 .space-btn.status-none    { background: rgba(255,255,255,0.6); border-color: rgba(0,0,0,0.18); color: var(--text-dim); }
 
