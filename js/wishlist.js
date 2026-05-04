@@ -276,8 +276,8 @@ const Wishlist = (() => {
   }
 
   // 優先度ドット
-  const PRIORITY_COLORS = { '1': '#B85555', '2': '#C07830', '3': '#A89020', '4': '#4B9B4B', '5': '#888888' };
-  const PRIORITY_TO_STATUS = { 1: 'priority', 2: 'want', 3: 'special', 4: 'purchased', 5: 'skip' };
+  const PRIORITY_COLORS = { '1': '#B85555', '2': '#C07830', '3': '#A0A010', '4': '#4B9B4B', '5': '#888888', '6': '#4888A8' };
+  const PRIORITY_TO_STATUS = { 1: 'priority', 2: 'want', 3: 'soft', 4: 'purchased', 5: 'skip', 6: 'special' };
 
   // 優先度変更をフロアマップスペースに同期
   async function syncPriorityToSpace(item) {
@@ -529,9 +529,10 @@ const Wishlist = (() => {
       { value: '',  label: '（未設定）' },
       { value: '1', label: '● 最優先', color: '#B85555' },
       { value: '2', label: '● 欲しい', color: '#C07830' },
-      { value: '3', label: '● できたら欲しい', color: '#A89020' },
+      { value: '3', label: '● できたら欲しい', color: '#A0A010' },
       { value: '4', label: '● 購入済', color: '#4B9B4B' },
-      { value: '5', label: '● 購入しない', color: '#888888' }
+      { value: '5', label: '● 購入しない', color: '#888888' },
+      { value: '6', label: '● 特別', color: '#4888A8' }
     ].forEach(({ value, label, color }) => {
       const opt = el('option', { value }, label);
       if (color) opt.style.color = color;

@@ -332,6 +332,26 @@ const FloorMap = (() => {
       }
 
       renderMap();
+
+      // ── フロア切替ナビゲーション（複数フロア時に地図下に表示） ──
+      if (floors.length > 1) {
+        const flIdx = floors.indexOf(floor);
+        const navBar = el('div', { style: 'display:flex;gap:8px;justify-content:center;align-items:center;margin-top:10px;flex-wrap:wrap' });
+        if (flIdx > 0) {
+          navBar.appendChild(el('button', {
+            class: 'btn btn-sm btn-ghost',
+            onclick: () => switchFloor(floors[flIdx - 1])
+          }, `◀ ${floors[flIdx - 1].name}`));
+        }
+        navBar.appendChild(el('span', { style: 'font-size:13px;font-weight:700;padding:0 8px;color:var(--text)' }, `📍 ${floor.name}`));
+        if (flIdx < floors.length - 1) {
+          navBar.appendChild(el('button', {
+            class: 'btn btn-sm btn-ghost',
+            onclick: () => switchFloor(floors[flIdx + 1])
+          }, `${floors[flIdx + 1].name} ▶`));
+        }
+        mapArea.appendChild(navBar);
+      }
     }
 
     renderTabs();
@@ -477,7 +497,7 @@ const FloorMap = (() => {
         // statusがnoneの場合、紐付き未購入本の優先度で色補完
         let status = sp.status || 'none';
         if (status === 'none' && wishPriorityBySpace && wishPriorityBySpace[sp.id]) {
-          const priToStatus = { 1: 'priority', 2: 'want', 3: 'special', 4: 'purchased', 5: 'skip' };
+          const priToStatus = { 1: 'priority', 2: 'want', 3: 'soft', 4: 'purchased', 5: 'skip', 6: 'special' };
           status = priToStatus[wishPriorityBySpace[sp.id]] || 'none';
         }
         const numPart = stripLabelPrefix(sp.label) + (sp.subLabel || '');
@@ -514,7 +534,7 @@ const FloorMap = (() => {
   // ── フリーフォーム時のボタンタップ処理 ──
   async function handleFreeformClick(event, floor, sp, fields, reload) {
     if (currentMode === 'check') {
-      if (['priority','want','special'].includes(sp.status)) {
+      if (['priority','want','soft','special'].includes(sp.status)) {
         const ok = await UI.confirmPurchase({
           title: (sp.items && sp.items[0]) || sp.circleName || '',
           circleName: sp.circleName,
@@ -676,7 +696,7 @@ const FloorMap = (() => {
 
   // スペースのステータス変更をウィッシュリストの優先度に同期
   async function syncStatusToWishlist(sp) {
-    const statusToPri = { priority: 1, want: 2, special: 3, purchased: 4, skip: 5 };
+    const statusToPri = { priority: 1, want: 2, soft: 3, purchased: 4, skip: 5, special: 6 };
     const newPri = statusToPri[sp.status];
     if (newPri == null) return;
     try {

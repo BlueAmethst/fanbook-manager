@@ -145,6 +145,22 @@ const Events = (() => {
         w.updatedAt = new Date().toISOString();
         await DB.wishlist.save(w);
         linked++;
+        // ウィッシュリストのデータをスペースに反映（優先度→ステータス、サークル名、書名）
+        try {
+          const priToSt = { 1: 'priority', 2: 'want', 3: 'soft', 4: 'purchased', 5: 'skip', 6: 'special' };
+          const stOrd   = { priority: 1, want: 2, soft: 3, special: 6, purchased: 4, skip: 5, none: 99 };
+          const sp = { ...matched };
+          const newSt = priToSt[Number(w.priority)];
+          if (newSt) {
+            const cur = stOrd[sp.status || 'none'] ?? 99;
+            const nw  = stOrd[newSt] ?? 99;
+            if (nw < cur) sp.status = newSt;
+          }
+          if (!sp.circleName && w.circleName) sp.circleName = w.circleName;
+          if (!sp.authorName && w.authorName) sp.authorName = w.authorName;
+          if (w.title && !(sp.items || []).includes(w.title)) sp.items = [...(sp.items || []), w.title];
+          await DB.spaces.save(sp);
+        } catch (_) {}
       } else {
         // スペースが未配置でも、イベント名/日が合えば eventId だけ設定
         const evMatch = (ev.name && (w.eventName || '').includes(ev.name.slice(0, 4))) ||
