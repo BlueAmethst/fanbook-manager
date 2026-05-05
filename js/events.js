@@ -136,16 +136,18 @@ const Events = (() => {
         return sl && (sl === wCode || wCode.includes(sl) || sl.includes(wCode));
       });
       if (matched) {
-        if (w.eventId === ev.id && w.linkedSpaceId === matched.id) {
+        const isNew = !(w.eventId === ev.id && w.linkedSpaceId === matched.id);
+        if (isNew) {
+          // 新規リンク：ウィッシュリスト側を更新
+          w.eventId = ev.id;
+          w.linkedSpaceId = matched.id;
+          w.updatedAt = new Date().toISOString();
+          await DB.wishlist.save(w);
+          linked++;
+        } else {
           alreadyLinked++;
-          continue;
         }
-        w.eventId = ev.id;
-        w.linkedSpaceId = matched.id;
-        w.updatedAt = new Date().toISOString();
-        await DB.wishlist.save(w);
-        linked++;
-        // ウィッシュリストのデータをスペースに反映（優先度→ステータス、サークル名、書名）
+        // 新規・既存リンク問わずスペースデータを毎回同期
         try {
           const priToSt = { 1: 'priority', 2: 'want', 3: 'soft', 4: 'purchased', 5: 'skip', 6: 'special' };
           const stOrd   = { priority: 1, want: 2, soft: 3, special: 6, purchased: 4, skip: 5, none: 99 };
