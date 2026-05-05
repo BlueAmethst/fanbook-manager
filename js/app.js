@@ -1,5 +1,5 @@
 // ====== アプリバージョン ======
-const APP_VERSION = '2026-05-02 ver.25';
+const APP_VERSION = 'ver.27';
 
 // ====== Router + App bootstrap ======
 const App = (() => {
@@ -21,7 +21,12 @@ const App = (() => {
   async function route() {
     const { name, params } = parseHash();
     const def = routes[name] || routes['library'];
-    document.getElementById('page-title').textContent = def.title;
+    const titleEl = document.getElementById('page-title');
+    titleEl.textContent = def.title;
+    const verBadge = document.createElement('span');
+    verBadge.textContent = ' ' + APP_VERSION;
+    verBadge.style.cssText = 'font-size:10px;font-weight:400;opacity:0.4;letter-spacing:0.02em;margin-left:6px;vertical-align:middle';
+    titleEl.appendChild(verBadge);
     const main = document.getElementById('main');
     main.innerHTML = '<div class="muted text-center" style="padding:30px">読み込み中...</div>';
     try {
@@ -57,7 +62,7 @@ const App = (() => {
 
     // Register service worker for PWA
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('./sw.js?v=25').catch(() => {});
+      navigator.serviceWorker.register('./sw.js?v=27').catch(() => {});
     }
 
     route();

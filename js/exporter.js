@@ -1,17 +1,22 @@
 // ====== Exporter（CSV/エクセル出力） ======
 const Exporter = (() => {
-  // 優先度順序：priority(最優先) > want(欲しい) > special(注目) > none > purchased > skip
+  // 優先度順序：priority > want > soft > special > none > purchased > skip
   const PRIORITY_ORDER = {
-    priority: 0, want: 1, special: 2, none: 3, purchased: 4, skip: 5
+    priority: 0, want: 1, soft: 2, special: 3, none: 4, purchased: 5, skip: 6
   };
-  // status → (優先度, ステータス) の2列
+  // status → 優先度ラベル（Excelの「優先度」列に表示）
   const STATUS_TO_PRIORITY = {
-    priority: '最優先', want: '欲しい', special: '注目',
-    purchased: '', skip: '', none: ''
+    priority: '1_最優先',
+    want:     '2_欲しい',
+    soft:     '3_できたら欲しい',
+    special:  '6_特別',
+    purchased:'4_購入済',
+    skip:     '5_購入しない',
+    none:     ''
   };
   const STATUS_TO_STATE = {
-    priority: '未購入', want: '未購入', special: '未購入',
-    purchased: '購入済', skip: 'スキップ', none: '未設定'
+    priority: '未購入', want: '未購入', soft: '未購入', special: '未購入',
+    purchased: '購入済', skip: '購入しない', none: '未設定'
   };
 
   // CSVセル用エスケープ：ダブルクォートで囲み、内部の " は "" に

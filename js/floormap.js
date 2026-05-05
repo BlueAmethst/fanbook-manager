@@ -11,7 +11,7 @@ const FloorMap = (() => {
     labelMode: 'sequential'
   };
 
-  let currentMode = 'check';
+  let currentMode = 'info';
 
   const defaultSpaceSize = { w: 88, h: 48 };
   let _freeformInner = null; // 位置変更用 参照
@@ -115,7 +115,7 @@ const FloorMap = (() => {
 
       // モード切替
       const modeSwitch = el('div', { class: 'mode-switch' });
-      for (const [key, label] of [['check','チェック'], ['info','情報'], ['edit','編集']]) {
+      for (const [key, label] of [['info','情報'], ['check','チェック'], ['edit','編集']]) {
         modeSwitch.appendChild(el('button', {
           class: currentMode === key ? 'active' : '',
           onclick: () => { currentMode = key; refreshMode(); }
